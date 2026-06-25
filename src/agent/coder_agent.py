@@ -1,7 +1,9 @@
+"""Execute supported design plans and persist their metrics."""
+
 import json
 
-from src.agent.base import BaseAgent
-from src.agent.types import AgentResult, RunContext
+from src.agent.LLM_base import BaseAgent
+from src.agent.agent_context import AgentResult, RunContext
 from src.data_utils import load_activity_test, load_activity_train
 from src.runner import run_plan
 from src.schemas import PlanSpec
@@ -20,7 +22,15 @@ class CoderAgent(BaseAgent):
         supported_plans = [
             plan
             for plan in plans
-            if plan.feature_type == "morgan_fingerprint" and plan.model_type in {"ridge", "random_forest"}
+            if (
+                plan.feature_type == "morgan_fingerprint"
+                and plan.model_type in {"ridge", "elastic_net", "random_forest", "xgboost"}
+            )
+            or (
+                plan.feature_type in {"skill_embedding", "skill_embedding_plus_morgan"}
+                and plan.model_type in {"ridge", "elastic_net", "random_forest", "xgboost"}
+                and plan.skill_ref
+            )
         ]
 
         skipped_plans = [plan.plan_id for plan in plans if plan not in supported_plans]

@@ -1,0 +1,14 @@
+# transient / regenerable
+.venv/
+__pycache__/
+*.pyc
+outputs/
+inputs/boltz/
+inputs/boltz_calib/
+inputs/msa/
+scoring/refs/
+scoring/calib_scores.csv
+scoring/calibration_manifest.csv
+
+# vendored upstream repos (large, re-clonable): tutorial examples + crystals
+vendor/

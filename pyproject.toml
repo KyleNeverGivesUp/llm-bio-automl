@@ -1,15 +1,21 @@
 [project]
-name = "bio-model-skills-creator"
+name = "llm-bio-automl"
 version = "0.1.0"
-description = "Add your description here"
+description = "Bio AutoML"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.89.0",
+    "catboost>=1.2.10",
+    "chemprop>=2.2.0",
     "huggingface-hub[cli]>=1.0.0",
-    "numpy>=2.4.4",
-    "pandas>=3.0.2",
+    "lightgbm>=4.6.0",
+    "numpy>=1.26.0",
+    "pandas>=2.0.0",
     "python-dotenv>=1.2.2",
-    "rdkit>=2026.3.1",
-    "scikit-learn>=1.8.0",
+    "rdkit>=2023.9.1",
+    "scikit-learn>=1.3.0",
+    "torch>=2.3.0",
+    "transformers>=4.40.0",
+    "xgboost>=2.0.0",
 ]

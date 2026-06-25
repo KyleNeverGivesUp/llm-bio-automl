@@ -1,6 +1,0 @@
-{
-  "mode": "fallback",
-  "selected_strategy": "chemistry_baselines",
-  "reason": "Fallback to supported chemistry baselines.",
-  "fallback_error": "'NoneType' object has no attribute 'strip'"
-}

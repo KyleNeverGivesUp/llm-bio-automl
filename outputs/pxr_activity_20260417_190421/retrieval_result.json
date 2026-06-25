@@ -1,6 +1,0 @@
-{
-  "mode": "fallback",
-  "selected_strategy": "chemistry_baselines",
-  "reason": "Fallback to supported chemistry baselines.",
-  "fallback_error": "OpenRouter request failed: 503 {\"error\":{\"message\":\"Provider returned error\",\"code\":503,\"metadata\":{\"raw\":\"no healthy upstream\",\"provider_name\":\"OpenInference\",\"is_byok\":false}},\"user_id\":\"org_35zqTVQM3s1bB1fNGmspiMB1x4E\"}"
-}

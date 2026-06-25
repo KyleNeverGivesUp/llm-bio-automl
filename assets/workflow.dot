@@ -1,0 +1,45 @@
+digraph workflow {
+  rankdir=TB;
+  bgcolor="white";
+  splines=true;
+  nodesep=0.5;
+  ranksep=0.55;
+  fontname="Helvetica";
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, color="#3b4252", penwidth=1.2, margin="0.18,0.10"];
+  edge [fontname="Helvetica", fontsize=9, color="#4c566a", penwidth=1.1];
+
+  U   [label="User\ntask + data_dir + budget", shape=oval, fillcolor="#e5e9f0"];
+  M   [label="(0) Manager\ndecision loop · budget · resumable", fillcolor="#5e81ac", fontcolor="white", penwidth=2];
+
+  S1  [label="(1) Setup / Intake\nclean · dedup · canonicalize SMILES", fillcolor="#eceff4"];
+  S2  [label="(2) Cross-validation folds  ★\nscaffold split (honest local score)", fillcolor="#a3be8c"];
+  S3  [label="(3) Retrieval\npick representation backbones", fillcolor="#eceff4"];
+  S4  [label="(4) Designer\npropose N diverse candidates", fillcolor="#eceff4"];
+
+  subgraph cluster_parallel {
+    label="Parallel candidate trajectories  (✓ / ✗  — one failure does not block others)";
+    fontname="Helvetica"; fontsize=10; color="#d08770"; style="rounded,dashed"; penwidth=1.5;
+    C1 [label="candidate 1\n(5) Coder → (7) Tuner", fillcolor="#ebcb8b"];
+    C2 [label="candidate 2\n(5) Coder → (7) Tuner", fillcolor="#ebcb8b"];
+    C3 [label="candidate N\n(5) Coder → (7) Tuner", fillcolor="#ebcb8b"];
+  }
+
+  SEL [label="(6) Selector / Leaderboard\nrank by validation score · top-k", fillcolor="#eceff4"];
+  AGG [label="(8) Aggregator  ★\nensemble: stacking + multi-seed + refit", fillcolor="#a3be8c"];
+  EXP [label="(9) Exporter\nsubmission.csv + reproducibility manifest", fillcolor="#eceff4"];
+  OUT [label="submission + report", shape=oval, fillcolor="#e5e9f0"];
+
+  U  -> M;
+  M  -> S1;
+  S1 -> S2 -> S3 -> S4;
+  S4 -> C1;
+  S4 -> C2;
+  S4 -> C3;
+  C1 -> SEL;
+  C2 -> SEL;
+  C3 -> SEL;
+  SEL -> AGG -> EXP -> OUT;
+
+  M   -> C2 [label="schedule · read reports · decide next", style=dashed, color="#b48ead", constraint=false];
+  SEL -> M  [label="validation-vs-leaderboard gap", style=dashed, color="#bf616a", constraint=false];
+}

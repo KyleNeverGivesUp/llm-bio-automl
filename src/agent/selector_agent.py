@@ -1,8 +1,10 @@
+"""Rank plan metrics and select the current best candidate."""
+
 import json
 from pathlib import Path
 
-from src.agent.base import LLMJsonAgent
-from src.agent.types import AgentResult, RunContext
+from src.agent.LLM_base import LLMJsonAgent
+from src.agent.agent_context import AgentResult, RunContext
 from src.selector import load_all_metrics, sort_metrics, write_best_plan, write_leaderboard
 
 
@@ -34,7 +36,7 @@ class SelectorAgent(LLMJsonAgent):
                 outputs={},
             )
 
-        ranking_metric_used = "mae" if context.primary_metric == "RAE" else context.primary_metric
+        ranking_metric_used = "rae" if context.primary_metric == "RAE" else context.primary_metric
         write_leaderboard(metrics_list, context.run_dir / "leaderboard.json", primary_metric=context.primary_metric)
 
         system_prompt = (

@@ -1,7 +1,0 @@
-{
-  "selected_plan_id": "morgan_rf",
-  "reason": "Fallback to deterministic top-ranked candidate.",
-  "fallback_error": "'choices'",
-  "used_fallback": true,
-  "llm_log_path": "outputs/pxr_activity_20260417_190421/llm_logs/selector_baseline.json"
-}

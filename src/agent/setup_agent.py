@@ -1,7 +1,9 @@
-from src.agent.base import BaseAgent
-from src.agent.types import AgentResult, RunContext
-from src.data_utils import validate_activity_dataset, write_dataset_report
-from src.task_spec_builder import build_pxr_activity_task_spec, write_task_spec
+"""Validate inputs and write the initial task specification."""
+
+from src.agent.LLM_base import BaseAgent
+from src.agent.agent_context import AgentResult, RunContext
+from ..data_utils import validate_activity_dataset, write_dataset_report
+from ..task_spec_builder import build_pxr_activity_task_spec, write_task_spec
 
 
 class SetupAgent(BaseAgent):

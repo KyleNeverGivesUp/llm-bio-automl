@@ -30,14 +30,22 @@ ANTHROPIC_BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "").strip()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 
 BIO_SEARCH_TERMS = [
-    "biomedical",
-    "bioinformatics",
-    "protein",
-    "genomics",
-    "DNA",
-    "RNA",
-    "drug discovery",
-    "medical imaging",
+    # "biomedical",
+    # "bioinformatics",
+    # "protein",
+    # "genomics",
+    # "DNA",
+    # "RNA",
+    # "drug discovery",
+    # "medical imaging",
+    "small molecule property prediction",
+    "SMILES regression",
+    "molecular property prediction",
+    "ligand activity prediction",
+    "chemberta",
+    "small molecule drug discovery",
+    "molecular transformer",
+    "chemistry foundation model",
 ]
 
 client_kwargs = {}

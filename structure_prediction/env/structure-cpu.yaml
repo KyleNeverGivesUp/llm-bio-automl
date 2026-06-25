@@ -1,0 +1,14 @@
+# Conda env for CPU-only steps (Mac/laptop): input prep, cif->pdb, validation,
+# zipping. NO GPU needed. Kept SEPARATE from the activity-track sklearn env.
+# Create with:  conda env create -f env/structure-cpu.yaml && conda activate pxr-struct-cpu
+name: pxr-struct-cpu
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pandas
+  - pyyaml
+  - numpy
+  - rdkit          # ligand graph / bond-order checks in the validator
+  - mdanalysis     # official validator parses PDBs with MDAnalysis
+  - gemmi          # cif -> pdb conversion

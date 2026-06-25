@@ -1,0 +1,516 @@
+{
+  "note": "Live HF search + curated frontier. Replaces static 7-ChemBERTa manifest.json.",
+  "hf_live": [
+    {
+      "ref": "ibm-research/biomed.sm.mv-te-84m-MoleculeNet-ligand_scaffold-BACE-101",
+      "downloads": 3578,
+      "likes": 3,
+      "library": "SmallMoleculeMultiView",
+      "family": "multiview",
+      "score": 17.675,
+      "tags": [
+        "SmallMoleculeMultiView",
+        "safetensors",
+        "binding-affinity-prediction",
+        "bio-medical",
+        "chemistry",
+        "drug-discovery",
+        "drug-target-interaction",
+        "model_hub_mixin",
+        "molecular-property-prediction",
+        "moleculenet",
+        "molecules",
+        "multi-view"
+      ]
+    },
+    {
+      "ref": "ibm-research/biomed.sm.mv-te-84m-MoleculeNet-ligand_scaffold-LIPOPHILICITY-101",
+      "downloads": 3669,
+      "likes": 1,
+      "library": "SmallMoleculeMultiView",
+      "family": "multiview",
+      "score": 17.626,
+      "tags": [
+        "SmallMoleculeMultiView",
+        "safetensors",
+        "binding-affinity-prediction",
+        "bio-medical",
+        "chemistry",
+        "drug-discovery",
+        "drug-target-interaction",
+        "model_hub_mixin",
+        "molecular-property-prediction",
+        "moleculenet",
+        "molecules",
+        "multi-view"
+      ]
+    },
+    {
+      "ref": "ibm-research/biomed.sm.mv-te-84m-MoleculeNet-ligand_scaffold-BBBP-101",
+      "downloads": 122,
+      "likes": 1,
+      "library": "SmallMoleculeMultiView",
+      "family": "multiview",
+      "score": 16.181,
+      "tags": [
+        "SmallMoleculeMultiView",
+        "safetensors",
+        "binding-affinity-prediction",
+        "bio-medical",
+        "chemistry",
+        "drug-discovery",
+        "drug-target-interaction",
+        "model_hub_mixin",
+        "molecular-property-prediction",
+        "moleculenet",
+        "molecules",
+        "multi-view"
+      ]
+    },
+    {
+      "ref": "ibm-research/biomed.sm.mv-te-84m-MoleculeNet-ligand_scaffold-TOX21-101",
+      "downloads": 25,
+      "likes": 1,
+      "library": "SmallMoleculeMultiView",
+      "family": "multiview",
+      "score": 15.604,
+      "tags": [
+        "SmallMoleculeMultiView",
+        "safetensors",
+        "binding-affinity-prediction",
+        "bio-medical",
+        "chemistry",
+        "drug-discovery",
+        "drug-target-interaction",
+        "model_hub_mixin",
+        "molecular-property-prediction",
+        "moleculenet",
+        "molecules",
+        "multi-view"
+      ]
+    },
+    {
+      "ref": "ibm-research/biomed.sm.mv-te-84m-MoleculeNet-ligand_scaffold-FREESOLV-101",
+      "downloads": 23,
+      "likes": 1,
+      "library": "SmallMoleculeMultiView",
+      "family": "multiview",
+      "score": 15.579,
+      "tags": [
+        "SmallMoleculeMultiView",
+        "safetensors",
+        "binding-affinity-prediction",
+        "bio-medical",
+        "chemistry",
+        "drug-discovery",
+        "drug-target-interaction",
+        "model_hub_mixin",
+        "molecular-property-prediction",
+        "moleculenet",
+        "molecules",
+        "multi-view"
+      ]
+    },
+    {
+      "ref": "kprsnt/drug-discovery-chemberta",
+      "downloads": 5,
+      "likes": 0,
+      "library": "",
+      "family": "smiles",
+      "score": 7.176,
+      "tags": [
+        "pytorch",
+        "roberta",
+        "drug-discovery",
+        "chemberta",
+        "smiles",
+        "molecular-property-prediction",
+        "pharmaceuticals",
+        "chemistry",
+        "text-classification",
+        "en",
+        "dataset:custom",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "kprsnt/drug-discovery-qwen-14b",
+      "downloads": 5,
+      "likes": 0,
+      "library": "transformers",
+      "family": "unknown",
+      "score": 7.176,
+      "tags": [
+        "transformers",
+        "safetensors",
+        "qwen2",
+        "text-classification",
+        "drug-discovery",
+        "chemistry",
+        "molecular-property-prediction",
+        "finetuned",
+        "en",
+        "dataset:custom",
+        "model-index",
+        "text-embeddings-inference"
+      ]
+    },
+    {
+      "ref": "Prashantkadasi/drug-discovery-chemberta",
+      "downloads": 4,
+      "likes": 0,
+      "library": "",
+      "family": "smiles",
+      "score": 7.146,
+      "tags": [
+        "pytorch",
+        "roberta",
+        "drug-discovery",
+        "chemberta",
+        "smiles",
+        "molecular-property-prediction",
+        "pharmaceuticals",
+        "chemistry",
+        "text-classification",
+        "en",
+        "dataset:custom",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "kprsnt/drug-discovery-gpt-20b",
+      "downloads": 3,
+      "likes": 0,
+      "library": "",
+      "family": "smiles",
+      "score": 5.114,
+      "tags": [
+        "safetensors",
+        "gpt_oss",
+        "chemistry",
+        "medical",
+        "pharma",
+        "r&D",
+        "drug-discovery",
+        "en",
+        "base_model:openai/gpt-oss-20b",
+        "base_model:finetune:openai/gpt-oss-20b",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "Reverb/atlas-1-molecular-property-prediction",
+      "downloads": 0,
+      "likes": 2,
+      "library": "pytorch",
+      "family": "3d",
+      "score": 5.095,
+      "tags": [
+        "pytorch",
+        "molecular-property-prediction",
+        "graph-neural-network",
+        "chemistry",
+        "qm9",
+        "geometric-deep-learning",
+        "atlas-series",
+        "graph-ml",
+        "dataset:qm9",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "ibm-research/biomed.omics.bl.sm.ma-ted-458m.moleculenet_bbbp",
+      "downloads": 29,
+      "likes": 1,
+      "library": "biomed-multi-alignment",
+      "family": "smiles",
+      "score": 3.651,
+      "tags": [
+        "biomed-multi-alignment",
+        "safetensors",
+        "drug-discovery",
+        "ibm",
+        "mammal",
+        "pytorch",
+        "small molecules drugs",
+        "smiles",
+        "MoleculeNet",
+        "blood-brain barrier",
+        "arxiv:2410.22367",
+        "base_model:ibm-research/biomed.omics.bl.sm.ma-ted-458m"
+      ]
+    },
+    {
+      "ref": "ibm-research/biomed.omics.bl.sm.ma-ted-458m.moleculenet_clintox_tox",
+      "downloads": 33,
+      "likes": 0,
+      "library": "biomed-multi-alignment",
+      "family": "smiles",
+      "score": 3.633,
+      "tags": [
+        "biomed-multi-alignment",
+        "safetensors",
+        "drug-discovery",
+        "ibm",
+        "mammal",
+        "pytorch",
+        "small molecules drugs",
+        "smiles",
+        "MoleculeNet",
+        "toxicity",
+        "arxiv:2410.22367",
+        "base_model:ibm-research/biomed.omics.bl.sm.ma-ted-458m"
+      ]
+    },
+    {
+      "ref": "ibm-research/biomed.omics.bl.sm.ma-ted-458m.moleculenet_clintox_fda",
+      "downloads": 24,
+      "likes": 0,
+      "library": "biomed-multi-alignment",
+      "family": "smiles",
+      "score": 3.531,
+      "tags": [
+        "biomed-multi-alignment",
+        "safetensors",
+        "drug-discovery",
+        "ibm",
+        "mammal",
+        "pytorch",
+        "small molecules drugs",
+        "smiles",
+        "MoleculeNet",
+        "FDA approval",
+        "arxiv:2410.22367",
+        "base_model:ibm-research/biomed.omics.bl.sm.ma-ted-458m"
+      ]
+    },
+    {
+      "ref": "thaonguyen217/farm_molecular_representation",
+      "downloads": 1531,
+      "likes": 1,
+      "library": "",
+      "family": "smiles",
+      "score": 3.248,
+      "tags": [
+        "safetensors",
+        "bert",
+        "masked-language-modeling",
+        "molecular-representation",
+        "en",
+        "dataset:chembl",
+        "dataset:zinc15",
+        "arxiv:2410.02082",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "knowledgator/SMILES2IUPAC-canonical-base",
+      "downloads": 7017,
+      "likes": 10,
+      "library": "transformers",
+      "family": "smiles",
+      "score": 3.055,
+      "tags": [
+        "transformers",
+        "pytorch",
+        "mt5",
+        "text2text-generation",
+        "chemistry",
+        "biology",
+        "medical",
+        "smiles",
+        "iupac",
+        "text-generation-inference",
+        "endpoints_compatible",
+        "deploy:azure"
+      ]
+    },
+    {
+      "ref": "blackroadio/blackroad-drug-discovery",
+      "downloads": 0,
+      "likes": 0,
+      "library": "",
+      "family": "unknown",
+      "score": 3.0,
+      "tags": [
+        "blackroad",
+        "enterprise",
+        "automation",
+        "drug-discovery",
+        "devops",
+        "infrastructure",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "knowledgator/SMILES2IUPAC-canonical-small",
+      "downloads": 1279,
+      "likes": 7,
+      "library": "transformers",
+      "family": "smiles",
+      "score": 2.291,
+      "tags": [
+        "transformers",
+        "safetensors",
+        "mt5",
+        "text2text-generation",
+        "chemistry",
+        "biology",
+        "medical",
+        "smiles",
+        "iupac",
+        "text-generation-inference",
+        "endpoints_compatible",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "chandar-lab/NovoMolGen_157M_SMILES_BPE",
+      "downloads": 881,
+      "likes": 0,
+      "library": "",
+      "family": "smiles",
+      "score": 1.95,
+      "tags": [
+        "pytorch",
+        "llama",
+        "molecular-generation",
+        "drug-discovery",
+        "flash-attention",
+        "text-generation",
+        "custom_code",
+        "en",
+        "dataset:ZINC-22",
+        "arxiv:2508.13408",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "chandar-lab/NovoMolGen_32M_SMILES_BPE",
+      "downloads": 874,
+      "likes": 0,
+      "library": "",
+      "family": "smiles",
+      "score": 1.946,
+      "tags": [
+        "pytorch",
+        "llama",
+        "molecular-generation",
+        "drug-discovery",
+        "flash-attention",
+        "text-generation",
+        "custom_code",
+        "en",
+        "dataset:ZINC-22",
+        "arxiv:2508.13408",
+        "region:us"
+      ]
+    },
+    {
+      "ref": "chandar-lab/NovoMolGen_32M_SMILES_AtomWise",
+      "downloads": 846,
+      "likes": 0,
+      "library": "",
+      "family": "smiles",
+      "score": 1.932,
+      "tags": [
+        "pytorch",
+        "llama",
+        "molecular-generation",
+        "drug-discovery",
+        "flash-attention",
+        "text-generation",
+        "custom_code",
+        "en",
+        "dataset:ZINC-22",
+        "arxiv:2508.13408",
+        "region:us"
+      ]
+    }
+  ],
+  "frontier": [
+    {
+      "ref": "CheMeleon",
+      "family": "graph",
+      "source": "chemprop --from-foundation CheMeleon",
+      "integration": "pip:chemprop",
+      "validated": "mt5 single 0.5904 (fine-tuned)",
+      "decorrelation": "base"
+    },
+    {
+      "ref": "Uni-Mol (unimolv1)",
+      "family": "3d",
+      "source": "pip:unimol_tools (Zenodo weights)",
+      "integration": "pip:unimol_tools",
+      "validated": "single 0.6248; +mt5 stack 0.5706",
+      "decorrelation": "high vs graph"
+    },
+    {
+      "ref": "dptech/Uni-Mol2",
+      "family": "3d",
+      "source": "HF dptech/Uni-Mol2 (pip:unimol_tools)",
+      "integration": "pip:unimol_tools",
+      "validated": null,
+      "decorrelation": "redundant with Uni-Mol"
+    },
+    {
+      "ref": "ibm-research/biomed.sm.mv-te-84m",
+      "family": "multiview",
+      "source": "HF (pip:bmfm_sm)",
+      "integration": "pip:git biomed-multi-view (needs fast_transformers \u2014 build pain)",
+      "validated": null,
+      "decorrelation": "high (adds 2D-image view)"
+    },
+    {
+      "ref": "tencent-ailab/grover",
+      "family": "graph-transformer",
+      "source": "GitHub + GDrive weights",
+      "integration": "py3.6 env; `main.py fingerprint` CLI",
+      "validated": null,
+      "decorrelation": "med (graph, diff arch)"
+    },
+    {
+      "ref": "yuyangw/MolCLR",
+      "family": "graph-contrastive",
+      "source": "GitHub (weights in repo)",
+      "integration": "torch1.7 env; no extract code (write from finetune.py)",
+      "validated": null,
+      "decorrelation": "med"
+    },
+    {
+      "ref": "recursionpharma/MolE",
+      "family": "graph-deberta",
+      "source": "GitHub (weights WITHHELD \u2014 code only)",
+      "integration": "BLOCKED \u2014 no public pretrained checkpoint",
+      "validated": null,
+      "decorrelation": "high (unobtainable)"
+    },
+    {
+      "ref": "rolayoalarcon/MolE",
+      "family": "graph-gin",
+      "source": "GitHub + Zenodo 10803099 (weights public)",
+      "integration": "torch-geometric env",
+      "validated": null,
+      "decorrelation": "med"
+    },
+    {
+      "ref": "DeepChem/ChemBERTa-*",
+      "family": "smiles",
+      "source": "HF (the old static manifest)",
+      "integration": "pip:transformers",
+      "validated": "frozen 0.74-0.82 (WEAK)",
+      "decorrelation": "low + weak"
+    }
+  ],
+  "families_seen": [
+    "3d",
+    "graph",
+    "graph-contrastive",
+    "graph-deberta",
+    "graph-gin",
+    "graph-transformer",
+    "multiview",
+    "smiles",
+    "unknown"
+  ]
+}

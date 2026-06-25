@@ -1,7 +1,9 @@
+"""Run the manager agent as a simple CLI entrypoint."""
+
 import logging
 
 from src.agent.manager_agent import ManagerAgent
-from src.agent.types import RunContext
+from src.agent.agent_context import RunContext
 from src.constants import RUN_ID
 
 

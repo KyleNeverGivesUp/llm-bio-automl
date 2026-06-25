@@ -1,4 +1,4 @@
-# Bio Model Skills Creator
+# llm-bio-automl
 
 This repository currently contains two PXR activity modeling pipelines:
 
@@ -168,7 +168,7 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_API_KEY=YOUR_OPENROUTER_API_KEY
 OPENROUTER_MODEL=openrouter/free
 OPENROUTER_SITE_URL=http://localhost
-OPENROUTER_APP_NAME=bio-model-skills-creator
+OPENROUTER_APP_NAME=llm-bio-automl
 OPENROUTER_MAX_TOKENS=2000
 OPENROUTER_TEMPERATURE=0
 ```

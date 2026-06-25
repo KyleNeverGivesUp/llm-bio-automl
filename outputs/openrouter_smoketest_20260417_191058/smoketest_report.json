@@ -1,8 +1,0 @@
-{
-  "status": "error",
-  "run_id": "openrouter_smoketest_20260417_191058",
-  "model": "minimax/minimax-m2.5:free",
-  "base_url": "https://openrouter.ai/api/v1",
-  "error": "OpenRouter request failed: 503 {\"error\":{\"message\":\"Provider returned error\",\"code\":503,\"metadata\":{\"raw\":\"no healthy upstream\",\"provider_name\":\"OpenInference\",\"is_byok\":false}},\"user_id\":\"org_35zqTVQM3s1bB1fNGmspiMB1x4E\"}",
-  "llm_log_path": "outputs/openrouter_smoketest_20260417_191058/llm_logs/openrouter_smoketest.json"
-}

@@ -10,3 +10,12 @@ data/structures
 .venv
 .env
 data
+
+# macOS junk
+.DS_Store
+
+# Run outputs (regeneratable per run_id)
+outputs/
+
+# Scratch / temp artifacts
+tmp_*

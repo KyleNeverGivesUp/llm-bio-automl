@@ -1,9 +1,59 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
 
 from src.constants import RUN_ID
+
+# Packages whose versions decide whether a result reproduces (featurization +
+# modeling stack). Recorded in the submission manifest.
+_MANIFEST_PACKAGES = [
+    "rdkit", "scikit-learn", "xgboost", "numpy", "pandas",
+    "scipy", "torch", "transformers",
+]
+
+
+def _pkg_versions() -> dict:
+    from importlib.metadata import PackageNotFoundError, version
+
+    out = {}
+    for name in _MANIFEST_PACKAGES:
+        try:
+            out[name] = version(name)
+        except PackageNotFoundError:
+            out[name] = None
+    return out
+
+
+def _git_commit() -> str | None:
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except Exception:
+        return None
+
+
+def build_manifest(run_dir: Path, source_label: str, extra: dict | None = None) -> dict:
+    """Reproducibility manifest: everything needed to regenerate this submission —
+    code version, package versions, python, the fold spec, and the run artifacts
+    that produced the predictions (leaderboard + ensemble report when present)."""
+    run_dir = Path(run_dir)
+    manifest = {
+        "source": source_label,
+        "git_commit": _git_commit(),
+        "python": sys.version.split()[0],
+        "packages": _pkg_versions(),
+    }
+    for name in ("leaderboard.json", "ensemble_report.json"):
+        path = run_dir / name
+        if path.exists():
+            manifest[name.replace(".json", "")] = load_json(path)
+    if extra:
+        manifest.update(extra)
+    return manifest
 
 
 def load_json(path: str | Path) -> dict:
@@ -90,6 +140,43 @@ def export_best_submission(run_id: str, data_dir: str = "data/pxr_activity") -> 
     write_final_report(final_report, final_report_path)
 
     return final_report
+
+
+def export_submission(
+    predictions_path: str | Path,
+    run_dir: str | Path,
+    source_label: str,
+    data_dir: str = "data/pxr_activity",
+    extra_manifest: dict | None = None,
+) -> dict:
+    """Build & validate ``submission.csv`` from any predictions CSV (e.g. the
+    ensemble's) and write a reproducibility manifest alongside it.
+
+    This is the M2 export path: it does not assume a single ``best_plan`` — it
+    takes whichever predictions we chose to submit and records exactly how they
+    were produced.
+    """
+    run_dir = Path(run_dir)
+    test_df = pd.read_csv(Path(data_dir) / "test.csv")
+    pred_df = pd.read_csv(predictions_path)
+
+    submission_df = build_submission(test_df, pred_df)
+    submission_path = run_dir / "submission.csv"
+    write_submission(submission_df, submission_path)
+
+    manifest = build_manifest(
+        run_dir,
+        source_label,
+        extra={
+            "predictions_path": str(predictions_path),
+            "submission_path": str(submission_path),
+            "n_submission_rows": int(len(submission_df)),
+            "submission_columns": list(submission_df.columns),
+            **(extra_manifest or {}),
+        },
+    )
+    write_json(manifest, run_dir / "submission_manifest.json")
+    return manifest
 
 
 if __name__ == "__main__":

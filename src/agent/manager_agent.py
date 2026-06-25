@@ -1,8 +1,10 @@
+"""Orchestrate the end-to-end AutoML agent pipeline."""
+
 import json
 import logging
 from dataclasses import asdict
 
-from src.agent.base import BaseAgent
+from src.agent.LLM_base import BaseAgent
 from src.agent.coder_agent import CoderAgent
 from src.agent.designer_agent import DesignerAgent
 from src.agent.exporter_agent import ExporterAgent
@@ -10,7 +12,7 @@ from src.agent.retrieval_agent import RetrievalAgent
 from src.agent.selector_agent import SelectorAgent
 from src.agent.setup_agent import SetupAgent
 from src.agent.tuner_agent import TunerAgent
-from src.agent.types import AgentResult, RunContext
+from src.agent.agent_context import AgentResult, RunContext
 from src.schemas import RunState
 
 
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class ManagerAgent(BaseAgent):
     name = "manager"
+    tuning_rounds = 5
 
     def __init__(self) -> None:
         self.setup_agent = SetupAgent()
@@ -80,15 +83,19 @@ class ManagerAgent(BaseAgent):
         run_state.best_plan_path = baseline_selection.outputs["best_plan_path"]
         self._write_run_state(run_state, context)
 
-        run_state.current_stage = "tuner"
-        self._write_run_state(run_state, context)
-        tuner_result = self.tuner_agent.run(context)
+        tuner_round_results: list[dict] = []
+        final_selection = baseline_selection
+        for round_idx in range(1, self.tuning_rounds + 1):
+            run_state.current_stage = f"tuner_round_{round_idx}"
+            self._write_run_state(run_state, context)
+            tuner_result = self.tuner_agent.run(context, iteration=round_idx, total_iterations=self.tuning_rounds)
+            tuner_round_results.append(tuner_result.outputs)
 
-        run_state.current_stage = "select_best_overall"
-        self._write_run_state(run_state, context)
-        final_selection = self.final_selector_agent.run(context)
-        run_state.best_plan_path = final_selection.outputs["best_plan_path"]
-        self._write_run_state(run_state, context)
+            run_state.current_stage = f"select_best_overall_round_{round_idx}"
+            self._write_run_state(run_state, context)
+            final_selection = self.final_selector_agent.run(context)
+            run_state.best_plan_path = final_selection.outputs["best_plan_path"]
+            self._write_run_state(run_state, context)
 
         run_state.current_stage = "exporter"
         self._write_run_state(run_state, context)
@@ -107,7 +114,8 @@ class ManagerAgent(BaseAgent):
                 "designer": designer_result.outputs,
                 "coder": coder_result.outputs,
                 "baseline_selection": baseline_selection.outputs,
-                "tuner": tuner_result.outputs,
+                "tuner_rounds": tuner_round_results,
+                "tuner": tuner_round_results[-1] if tuner_round_results else {},
                 "final_selection": final_selection.outputs,
                 "exporter": exporter_result.outputs,
                 "run_state_path": str(context.run_dir / "run_state.json"),

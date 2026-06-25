@@ -23,10 +23,8 @@ def sort_metrics(metrics_list: list[dict], primary_metric: str) -> list[dict]:
     if not metrics_list:
         return []
 
-    # MVP fallback:
-    # If challenge metric is not implemented yet, use MAE ascending.
     if primary_metric == "RAE":
-        sort_key = "mae"
+        sort_key = "rae"
         reverse = False
     elif primary_metric in {"mae"}:
         sort_key = primary_metric
@@ -55,7 +53,7 @@ def write_leaderboard(metrics_list: list[dict], output_path: str, primary_metric
 
     leaderboard = {
         "primary_metric": primary_metric,
-        "ranking_metric_used": "mae" if primary_metric == "RAE" else primary_metric,
+        "ranking_metric_used": "rae" if primary_metric == "RAE" else primary_metric,
         "n_runs": len(ranked),
         "results": ranked,
     }

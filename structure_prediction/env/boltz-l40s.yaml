@@ -1,0 +1,16 @@
+# Conda env for the GPU box (L40S). Boltz-2 inference + cif->pdb conversion.
+# Create with:  conda env create -f env/boltz-l40s.yaml && conda activate boltz-l40s
+# If torch/CUDA resolution is painful on the cluster, instead just:
+#   conda create -n boltz-l40s python=3.11 -y && conda activate boltz-l40s
+#   pip install boltz -U gemmi pandas pyyaml
+name: boltz-l40s
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - boltz            # Boltz-2 (pulls a CUDA torch build)
+      - gemmi            # cif -> pdb conversion (src/cif_to_pdb.py)
+      - pandas
+      - pyyaml
