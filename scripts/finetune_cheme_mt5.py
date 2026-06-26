@@ -38,13 +38,15 @@ def _primary_pred(csv: Path) -> np.ndarray:
     raise RuntimeError(f"no prediction column in {csv}")
 
 
-def _train_fold(train_csv: Path, out_dir: Path, epochs: int, accel: str) -> str:
+def _train_fold(train_csv: Path, out_dir: Path, epochs: int, accel: str,
+                num_workers: int = 8, batch_size: int = 64) -> str:
     subprocess.run(
         ["chemprop", "train", "-i", str(train_csv), "-s", SMILES,
          "--target-columns", *TARGETS, "-t", "regression", "--from-foundation", "CheMeleon",
          "--loss-function", "mae",   # the 0.538 solution used MAE loss (~0.01 over MSE on noisy labels)
          "--epochs", str(epochs), "--split-sizes", "0.9", "0.1", "0.0",
-         "-o", str(out_dir), "--accelerator", accel, "-n", "0"],
+         "--batch-size", str(batch_size),
+         "-o", str(out_dir), "--accelerator", accel, "-n", str(num_workers)],
         check=True,
     )
     ckpts = (glob.glob(str(out_dir / "**" / "best*.ckpt"), recursive=True)
@@ -55,10 +57,11 @@ def _train_fold(train_csv: Path, out_dir: Path, epochs: int, accel: str) -> str:
     return ckpts[0]
 
 
-def _predict(model_path: str, in_csv: Path, out_csv: Path, accel: str) -> np.ndarray:
+def _predict(model_path: str, in_csv: Path, out_csv: Path, accel: str, num_workers: int = 8) -> np.ndarray:
     subprocess.run(
         ["chemprop", "predict", "--test-path", str(in_csv), "-s", SMILES,
-         "--model-paths", model_path, "--preds-path", str(out_csv), "--accelerator", accel, "-n", "0"],
+         "--model-paths", model_path, "--preds-path", str(out_csv),
+         "--accelerator", accel, "-n", str(num_workers)],
         check=True,
     )
     return _primary_pred(out_csv)
@@ -72,6 +75,8 @@ def main() -> None:
     ap.add_argument("--accelerator", default="auto")
     ap.add_argument("--folds", type=int, default=None)
     ap.add_argument("--max-rows", type=int, default=None)
+    ap.add_argument("--num-workers", type=int, default=8, help="dataloader workers (8 ~= 12x faster than 0)")
+    ap.add_argument("--batch-size", type=int, default=128, help="train batch size (128 ~2x faster than 64; use 64 to reproduce 0.5904 exactly)")
     ap.add_argument("--keep-reactive", action="store_true",
                     help="disable reactive-electrophile exclusion (default: drop reactive rows from TRAINING)")
     args = ap.parse_args()
@@ -114,9 +119,10 @@ def main() -> None:
         fold_train.to_csv(out / f"_train_f{k}.csv", index=False)
         train[va_mask][[SMILES]].to_csv(out / f"_held_f{k}.csv", index=False)
 
-        ckpt = _train_fold(out / f"_train_f{k}.csv", out / f"ckpt_f{k}", args.epochs, args.accelerator)
-        oof[va_mask] = _predict(ckpt, out / f"_held_f{k}.csv", out / f"_oof_f{k}.csv", args.accelerator)
-        test_cols.append(_predict(ckpt, out / "_test_in.csv", out / f"_test_f{k}.csv", args.accelerator))
+        ckpt = _train_fold(out / f"_train_f{k}.csv", out / f"ckpt_f{k}", args.epochs, args.accelerator,
+                           num_workers=args.num_workers, batch_size=args.batch_size)
+        oof[va_mask] = _predict(ckpt, out / f"_held_f{k}.csv", out / f"_oof_f{k}.csv", args.accelerator, args.num_workers)
+        test_cols.append(_predict(ckpt, out / "_test_in.csv", out / f"_test_f{k}.csv", args.accelerator, args.num_workers))
         print(f"fold {k}: {int(va_mask.sum())} OOF rows predicted (primary pEC50)", flush=True)
 
     done = ~np.isnan(oof)
