@@ -43,22 +43,24 @@ class Ctx:
 
 
 # --- skill executors (wrap existing code) ----------------------------------- #
-def _skill_retrieve(ctx: Ctx, args: dict) -> str:
+def _skill_retrieve(ctx: Ctx, args: dict) -> tuple[str, str]:
     from src.agent.hf_retrieval import discover_models
     cands = discover_models(top_k=int(args.get("top_k", 12)))
     (ctx.run_dir / "candidates_live.json").write_text(
         json.dumps([c.to_dict() for c in cands], indent=2), encoding="utf-8")
     fams = sorted({c.family for c in cands})
-    return f"discovered {len(cands)} models, families={fams}"
+    return f"discovered {len(cands)} models, families={fams}", "deterministic"  # HF HTTP, no LLM
 
 
-def _skill_design_menu(ctx: Ctx, args: dict) -> str:
+def _skill_design_menu(ctx: Ctx, args: dict) -> tuple[str, str]:
     from src.agent.menu_designer import MenuDesigner
     from src.cv_runner import run_plan_cv
     n = int(args.get("n", 4))
     prior = [{"plan_id": k, **{x: v.get(x) for x in ("featurizer", "model", "params", "judge_rae")}}
-             for k, v in ctx.state["plans"].items()]
-    plans = MenuDesigner().propose(n, prior, exclude=set(ctx.state["plans"]), use_llm=True, log_path=None)
+             for k, v in ctx.state["plans"].items() if isinstance(v, dict)]
+    designer = MenuDesigner()
+    plans = designer.propose(n, prior, exclude=set(ctx.state["plans"]), use_llm=True, log_path=None)
+    src = getattr(designer, "source", "llm")
     done = 0
     for p in plans:
         try:
@@ -72,16 +74,18 @@ def _skill_design_menu(ctx: Ctx, args: dict) -> str:
         except Exception as e:
             ctx.state["plans"].setdefault("_errors", []) if False else None
             print(f"    menu {p.plan_id} failed: {type(e).__name__}")
-    return f"ran {done}/{len(plans)} menu plans (frozen featurizers — expect ~0.62, the weak baseline)"
+    return f"ran {done}/{len(plans)} menu plans (frozen featurizers — the weak baseline ~0.62)", src
 
 
-def _skill_finetune(ctx: Ctx, args: dict) -> str:
+def _skill_finetune(ctx: Ctx, args: dict) -> tuple[str, str]:
     import subprocess
     from src.agent.finetune_designer import FineTuneDesigner
     from src.finetune_runner import build_command, collect_results
     repo = ctx.data_dir.parent.parent
-    prior = [{"plan_id": k, "judge_rae": v.get("judge_rae")} for k, v in ctx.state["plans"].items()]
-    plans = FineTuneDesigner().propose(prior_results=prior)
+    prior = [{"plan_id": k, "judge_rae": v.get("judge_rae")} for k, v in ctx.state["plans"].items() if isinstance(v, dict)]
+    designer = FineTuneDesigner()
+    plans = designer.propose(prior_results=prior)
+    src = designer.source                       # "llm" if the LLM picked the backbones, "fallback" if it 429'd
     done = 0
     for p in plans:
         try:
@@ -98,20 +102,21 @@ def _skill_finetune(ctx: Ctx, args: dict) -> str:
             done += 1
         except Exception as e:
             print(f"    finetune {p.plan_id} failed: {type(e).__name__}: {str(e)[:80]}")
-    return f"fine-tuned {done} decorrelated foundation models (the performance lever)"
+    return f"fine-tuned {done} decorrelated foundation models (the performance lever)", src
 
 
-def _skill_stack(ctx: Ctx, args: dict) -> str:
+def _skill_stack(ctx: Ctx, args: dict) -> tuple[str, str]:
     dirs = [Path(p["dir"]) for p in ctx.state["plans"].values()
             if isinstance(p, dict) and p.get("judge_rae") is not None and p["judge_rae"] < 0.95]
     if len(dirs) < 1:
-        return "nothing to stack yet"
+        return "nothing to stack yet", "deterministic"
     aggregate(dirs, ctx.run_dir / "ensemble")
     rae = judge_csv(ctx.run_dir / "ensemble" / "ensemble" / "test_predictions.csv")["rae"]
     prev = ctx.state["best"]["judge_rae"] if ctx.state["best"] else None
     if prev is None or rae < prev:
         ctx.state["best"] = {"judge_rae": rae, "n_members": len(dirs)}
-    return f"stacked {len(dirs)} members -> judge RAE {rae:.4f}" + (f" (was {prev:.4f})" if prev else "")
+    msg = f"stacked {len(dirs)} members -> judge RAE {rae:.4f}" + (f" (was {prev:.4f})" if prev else "")
+    return msg, "deterministic"  # ridge stack + judge, no LLM
 
 
 SKILLS = {
@@ -135,17 +140,24 @@ class SkillManager(LLMJsonAgent):
     name = "skill_manager"
 
     def run(self, ctx: Ctx, max_steps: int = 6) -> dict:
+        log_path = ctx.run_dir / "stage_log.jsonl"
+
+        def record(entry: dict) -> None:
+            ctx.state["log"].append(entry)
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry) + "\n")
+
         for step in range(1, max_steps + 1):
             d = self._decide(ctx, step, max_steps)
-            skill, args, reason = d.get("skill"), d.get("args", {}), d.get("reason", "")
-            print(f"[manager step {step}] -> {skill}  ({reason[:80]})")
+            skill, args, reason, dsrc = d.get("skill"), d.get("args", {}), d.get("reason", ""), d.get("_source", "llm")
             if skill == "finish" or skill not in SKILLS:
-                ctx.state["log"].append({"step": step, "skill": "finish", "reason": reason})
+                print(f"[step {step}] FINISH  (manager-decision={dsrc})  {reason[:70]}")
+                record({"step": step, "skill": "finish", "manager_decision": dsrc, "reason": reason})
                 break
-            result = SKILLS[skill]["executor"](ctx, args or {})
-            print(f"           {result}")
-            ctx.state["log"].append({"step": step, "skill": skill, "result": result,
-                                     "best": ctx.state.get("best")})
+            result, ssrc = SKILLS[skill]["executor"](ctx, args or {})
+            print(f"[step {step}] {skill}  | manager-decision={dsrc} | skill-source={ssrc}\n           {result}")
+            record({"step": step, "skill": skill, "manager_decision": dsrc, "skill_source": ssrc,
+                    "result": result, "best": ctx.state.get("best")})
         return ctx.state
 
     def _decide(self, ctx: Ctx, step: int, max_steps: int) -> dict:
@@ -167,14 +179,17 @@ class SkillManager(LLMJsonAgent):
         )
         try:
             out = self.call_json(system, user)
-            return out if isinstance(out, dict) else {"skill": "finish", "reason": "bad LLM output"}
+            if isinstance(out, dict):
+                out["_source"] = "llm"
+                return out
+            return {"skill": "finish", "reason": "bad LLM output", "_source": "fallback"}
         except Exception as e:
             # LLM unavailable (e.g., 429 rate-limit on the free model): degrade gracefully, don't crash.
             # If we haven't fine-tuned yet, do the lever; else stack; else finish with what we have.
             print(f"[manager] LLM decide failed ({type(e).__name__}); heuristic fallback")
             has_ft = any(str(v.get("model")) == "finetune" for v in ctx.state["plans"].values() if isinstance(v, dict))
             if not has_ft:
-                return {"skill": "finetune", "reason": "fallback: fine-tune the decorrelated lever"}
+                return {"skill": "finetune", "reason": "fallback: fine-tune the decorrelated lever", "_source": "fallback"}
             if ctx.state.get("best") is None:
-                return {"skill": "stack", "reason": "fallback: stack the pool"}
-            return {"skill": "finish", "reason": "fallback: have a stacked result, stop"}
+                return {"skill": "stack", "reason": "fallback: stack the pool", "_source": "fallback"}
+            return {"skill": "finish", "reason": "fallback: have a stacked result, stop", "_source": "fallback"}

@@ -36,6 +36,8 @@ class FineTuneDesigner(LLMJsonAgent):
     def run(self, context):  # BaseAgent abstract; the manager calls propose() directly
         raise NotImplementedError("call propose()")
 
+    source: str = "unknown"   # "llm" | "fallback" — set by propose(), so callers can log the decision source
+
     def propose(self, prior_results: list[dict] | None = None) -> list[FineTunePlan]:
         """LLM picks which backbones to fine-tune + epochs; falls back to the validated combo."""
         try:
@@ -43,9 +45,11 @@ class FineTuneDesigner(LLMJsonAgent):
             plans = [self._to_plan(r) for r in raw]
             plans = [p for p in plans if p is not None]
             if plans:
+                self.source = "llm"
                 return plans
         except Exception as e:  # LLM down / bad JSON / unknown backbone -> validated fallback
             print(f"[finetune_designer] LLM propose failed ({e}); using validated fallback")
+        self.source = "fallback"
         return list(_FALLBACK)
 
     def _llm_propose(self, prior_results: list[dict]) -> list[dict]:
