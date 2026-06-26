@@ -32,6 +32,7 @@ class LLMConfig:
     app_name: str
     max_tokens: int
     temperature: float
+    timeout: float = 60.0   # seconds; a slow/congested (free) endpoint fails fast -> caller falls back
 
 
 def load_llm_config() -> LLMConfig:
@@ -43,6 +44,7 @@ def load_llm_config() -> LLMConfig:
         app_name=os.environ.get("OPENROUTER_APP_NAME", "llm-bio-automl"),
         max_tokens=int(os.environ.get("OPENROUTER_MAX_TOKENS", "2000")),
         temperature=float(os.environ.get("OPENROUTER_TEMPERATURE", "0")),
+        timeout=float(os.environ.get("OPENROUTER_TIMEOUT", "60")),
     )
 
 
@@ -127,7 +129,7 @@ class LLMJsonAgent(BaseAgent):
         )
 
         try:
-            with request.urlopen(req) as resp:
+            with request.urlopen(req, timeout=self.config.timeout) as resp:
                 raw = json.loads(resp.read().decode("utf-8"))
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")
@@ -174,7 +176,7 @@ class LLMJsonAgent(BaseAgent):
             )
 
             try:
-                with request.urlopen(req) as resp:
+                with request.urlopen(req, timeout=self.config.timeout) as resp:
                     raw = json.loads(resp.read().decode("utf-8"))
             except error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="ignore")
