@@ -34,15 +34,21 @@ import argparse
 import json
 from pathlib import Path
 
+import subprocess
+
 import pandas as pd
 
 from src.agent.menu_designer import MenuDesigner
 from src.agent.menu_tuner import MenuTuner
+from src.agent.finetune_designer import FineTuneDesigner
+from src.agent.hf_retrieval import discover_models
 from src.aggregator import aggregate
 from src.analog_judge import judge_csv
 from src.cv_runner import run_plan_cv
+from src.finetune_runner import build_command, collect_results
 from src.schemas import FoldSpec, MenuPlan
 
+REPO = Path(__file__).resolve().parent.parent
 DATA_DIR = Path("data/pxr_activity")
 CACHE_DIR = Path("data/featurizer_cache")
 RUN_DIR = Path("outputs/auto")
@@ -103,6 +109,37 @@ def run_candidate(plan, state, train_df, test_df, folds, plans_dir) -> bool:
         return False
 
 
+def run_finetune_candidate(plan, state, plans_dir, collect_only) -> bool:
+    """Coder routing for FINE-TUNE plans: GPU-train via template (or reuse), judge, add to the SAME pool."""
+    try:
+        out_dir = (REPO / "predictions") if collect_only else (Path("/tmp") / plan.plan_id)
+        if not collect_only:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            cmd = build_command(plan, repo_dir=REPO, data_dir=DATA_DIR, out_dir=out_dir)
+            print(f"    [GPU] {plan.plan_id}: {' '.join(cmd)}", flush=True)
+            subprocess.run(cmd, check=True)
+        plan_dir = collect_results(plan, out_dir=out_dir, plans_root=plans_dir,
+                                   folds_json=DATA_DIR / "folds_calibrated.json", train_csv=DATA_DIR / "train.csv")
+        jr = _judge_dir(plan_dir)
+        state["plans"][plan.plan_id] = {"dir": str(plan_dir), "judge_rae": jr,
+                                        "featurizer": f"finetune:{plan.backbone}", "model": "finetune",
+                                        "params": {"epochs": plan.epochs}}
+        print(f"    ✓ {plan.plan_id}: judge {jr:.4f}")
+        return True
+    except Exception as e:
+        print(f"    ✗ {plan.plan_id}: {type(e).__name__}: {str(e)[:120]}")
+        return False
+
+
+def finetune_phase(state, plans_dir, collect_only) -> int:
+    """LLM (FineTuneDesigner) picks decorrelated backbones to fine-tune; run each into the pool."""
+    prior = [{"plan_id": pid, "judge_rae": p["judge_rae"]}
+             for pid, p in state["plans"].items() if p.get("judge_rae") is not None]
+    plans = FineTuneDesigner().propose(prior_results=prior)
+    print(f"  FineTuneDesigner proposed: {[f'{p.backbone}(e{p.epochs})' for p in plans]}")
+    return sum(run_finetune_candidate(p, state, plans_dir, collect_only) for p in plans)
+
+
 def tune_phase(state, tuner, train_df, test_df, folds, plans_dir, top, n_cand, use_llm) -> int:
     """Refine the hyperparameters of the top-``top`` single bases, judged on Set 1."""
     singles = sorted([(pid, p) for pid, p in state["plans"].items() if p["judge_rae"] is not None],
@@ -140,6 +177,8 @@ def main() -> None:
     ap.add_argument("--tune-top", type=int, default=0, help="after design rounds, tune the top-K single bases (0=off)")
     ap.add_argument("--tune-candidates", type=int, default=4, help="hyperparameter sets per tuned base")
     ap.add_argument("--no-llm", action="store_true", help="use the deterministic fallback Designer/Tuner only")
+    ap.add_argument("--finetune", action="store_true", help="add the LLM-orchestrated fine-tune phase (GPU)")
+    ap.add_argument("--ft-collect-only", action="store_true", help="fine-tune phase reuses predictions/ instead of GPU training")
     args = ap.parse_args()
 
     train_df = pd.read_csv(DATA_DIR / "train.csv")
@@ -159,6 +198,17 @@ def main() -> None:
         print(f"Seeded pool with {len(state['plans'])} frozen-menu bases.")
 
     designer = MenuDesigner()
+
+    # Live model retrieval (replaces the static 7-ChemBERTa manifest): discover + log a
+    # family-classified candidate pool the designer/finetune-designer draw on.
+    try:
+        cands = discover_models(top_k=15)
+        (RUN_DIR / "candidates_live.json").write_text(
+            json.dumps([c.to_dict() for c in cands], indent=2), encoding="utf-8")
+        fams = sorted({c.family for c in cands})
+        print(f"Live retrieval: {len(cands)} HF candidates, families={fams}")
+    except Exception as e:
+        print(f"Live retrieval skipped ({e})")
 
     # Baseline ensemble from the seed pool (the bar to beat).
     if state["best"] is None:
@@ -207,6 +257,20 @@ def main() -> None:
         state["history"].append({"round": "tune", "n_new": n_tuned, "ensemble_judge_rae": ens["judge_rae"]})
         if improved:
             state["best"] = {**ens, "round": "tuned"}
+        state_path.write_text(json.dumps(state, indent=2))
+
+    # LLM-orchestrated fine-tune phase: designer picks decorrelated backbones to fine-tune;
+    # they join the SAME pool and get stacked/judged with the menu members (the rank 84->20 lever).
+    if args.finetune:
+        print("=== Fine-tune phase (LLM-orchestrated) ===")
+        n_ft = finetune_phase(state, plans_dir, args.ft_collect_only)
+        ens = stack_and_judge(state, RUN_DIR / "round_finetune")
+        improved = ens["judge_rae"] < state["best"]["judge_rae"] - 1e-5
+        print(f"  Fine-tune ensemble ({n_ft} new): judge {ens['judge_rae']:.4f} vs best "
+              f"{state['best']['judge_rae']:.4f}  -> {'IMPROVED' if improved else 'no gain'}\n")
+        state["history"].append({"round": "finetune", "n_new": n_ft, "ensemble_judge_rae": ens["judge_rae"]})
+        if improved:
+            state["best"] = {**ens, "round": "finetune"}
         state_path.write_text(json.dumps(state, indent=2))
 
     # Final submission from the best-ever ensemble (re-stack its members for the test preds).

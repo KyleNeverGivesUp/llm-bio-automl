@@ -14,12 +14,14 @@ the blind Set-2 + a **methodology report due July 1**. This file is the handoff/
 ## The pipeline (mirrors AIBuildAI, arXiv 2604.14455, #1 on MLE-Bench)
 `src/agent/manager_agent.py` orchestrates: setup → **retrieval** → **designer** → coder → selector →
 **tuner** → selector → exporter. LLM-driven stages: retrieval, designer, selector(s), tuner.
-**Our pipeline is a stripped-down AIBuildAI:**
-- `coder_agent` only EXECUTES fixed plans (`run_plan_cv`) — it does NOT generate code (AIBuildAI's coder writes training code).
-- `tuner_agent` only tunes params — it does NOT fine-tune foundation models on GPU (AIBuildAI's tuner does).
-- So the pipeline can only combine **8 frozen featurizers × fixed sklearn models** — "AutoML over a fixed menu", not feature engineering or fine-tuning.
+The original menu loop only combined **8 frozen featurizers × fixed sklearn models** (rank ~84) — no fine-tuning, which is where the performance is (rank ~20). **Full module map + call flow: `docs/ARCHITECTURE.md`.**
 
-**The rank 84 → 20 gap is exactly the fine-tuning capability we left out.** Open design question (asked the prof): bring LLM-orchestrated fine-tuning into the pipeline (LLM writes the training config/script, GPU trains) — that's where the performance is.
+**LLM-orchestrated fine-tuning is now ADDED (prof-approved, end-to-end, reproduces 0.5706):**
+- `src/agent/finetune_designer.py` — **LLM decides** which backbones to fine-tune + epochs + stacking (picks decorrelated families).
+- `src/finetune_runner.py` — `FineTunePlan` + `build_command` (plan→GPU cmd) + `collect_results` (→ aggregator).
+- `scripts/run_finetune_auto.py` — end-to-end: LLM designs → GPU trains each template → stack → judge → **0.5706**.
+- **Boundary:** LLM picks WHAT to fine-tune (backbone/epochs/stack) from a FIXED list `{chemeleon, unimol}`; the training code is a verified TEMPLATE per backbone (`scripts/finetune_*.py`) — template-based codegen, not free codegen. Adding a backbone = adding a template (the model-integration cost).
+- **Still pending:** wire `finetune_designer` into `manager_agent` (so the manager loop proposes FT plans natively, not just the standalone `run_finetune_auto.py`); wire `hf_retrieval` into `retrieval_agent`.
 
 ## Key findings (don't re-derive)
 - **Decorrelation thesis (validated):** 2 decorrelated FINE-TUNED foundation models (graph + 3D) stacked beat a 48-base correlated ensemble. corr(unimol,mt5)=0.866. Single ≥ ensemble when members are correlated.
@@ -45,7 +47,12 @@ the blind Set-2 + a **methodology report due July 1**. This file is the handoff/
 - Local dev: `uv run python ...`. Fine-tuning needs the pod GPU.
 
 ## Next steps (priority order)
-1. **Fine-tuning into the pipeline** (prof's open question) — make the coder generate fine-tune configs from verified templates + the tuner launch GPU training. Running the pipeline ON DSMLP (next to the GPU) makes this cleaner.
-2. **End-game Set-1 fold-in** (~0.10 on singles, irreversible — consumes the judge) for the final Set-2 submission. Do LAST.
+1. ✅ **LLM-orchestrated fine-tuning** (prof-approved) — DONE end-to-end via `run_finetune_auto.py` (reproduces 0.5706). Remaining: wire `finetune_designer` into `manager_agent` so the main loop does it natively; wire `hf_retrieval` into `retrieval_agent`.
+2. **End-game Set-1 fold-in** (~0.10 on singles, irreversible — consumes the judge) for the final Set-2 submission. Needs a working GPU env (`~/.local` torch/chemprop/unimol kept). Do LAST.
 3. **Methodology report** (July 1, mandatory).
 4. (optional) DataMaster = data-side autonomous twin of the model-retrieval component (paper completeness, low score value).
+
+## Running on DSMLP
+- SSH: `~/.ssh/config` has `dsmlp` (ControlMaster → Duo once/8h). Pod: `launch.sh -g 1 -v a5000 -m 64`, 6h limit.
+- env deps in `~/.local` (torch 2.4.1+cu121, chemprop, unimol_tools, lightgbm, xgboost, transformers; torchvision 0.19.1 matched). tensorboard `notf`/protobuf errors are HARMLESS (chemprop falls back to CSVLogger).
+- `python` (not `uv`) on the pod. Fine-tune writes to `/tmp/<plan>` (pod-local, off the 11G home quota); prune GPU zombies (`pkill -9 -f finetune`) if you hit CUDA OOM with a process holding ~23G.

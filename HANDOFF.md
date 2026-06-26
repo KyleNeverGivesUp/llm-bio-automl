@@ -33,7 +33,12 @@ A+B+D are Mac-doable now; C is why we're moving the pipeline onto DSMLP.
 - Pod: `launch.sh -g 1 -v a5000 -m 64`, 6h limit, ~11G quota (TIGHT). Weights auto-download. IBM dropped, so `~/.local` (torch/chemprop/unimol) should be kept/rebuilt for fine-tuning + the fold-in.
 
 ## Open threads / next
-1. Bring fine-tuning into the pipeline (pending prof's answer; plan A-D above). Best done with the pipeline running on DSMLP.
+1. ✅ **Fine-tuning in the pipeline — DONE** (prof said "yes, promising"). LLM-orchestrated end-to-end:
+   `finetune_designer` (LLM picks decorrelated backbones) → `finetune_runner` (plan→GPU cmd→collect)
+   → `run_finetune_auto.py` → stack → judge → **0.5706**. Boundary: LLM selects from a fixed backbone
+   list {chemeleon, unimol}; training code is verified templates (not free codegen). See `docs/ARCHITECTURE.md`.
+   - Remaining: wire `finetune_designer` into `manager_agent` (native loop, not standalone script);
+     wire `hf_retrieval` into `retrieval_agent` (live model discovery instead of static manifest).
 2. End-game **Set-1 fold-in** (~0.10, irreversible) for the final Set-2 submission — do LAST.
 3. **Methodology report** (July 1).
 4. (optional) DataMaster = data-side autonomous twin of the model-retrieval component.
