@@ -64,20 +64,24 @@ def _randomized_smiles(smi: str, n: int, seed: int) -> list[str]:
 
 
 def _fit_predict(train_csv: Path, pred_frames: dict[str, pd.DataFrame], work: Path,
-                 epochs: int, lr: float, batch: int) -> dict[str, np.ndarray]:
+                 epochs: int, lr: float, batch: int, num_workers: int = 8) -> dict[str, np.ndarray]:
     """Train one Uni-Mol model on train_csv; return {key: predictions} for each frame in pred_frames."""
     from unimol_tools import MolTrain, MolPredict
 
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
-    clf = MolTrain(
+    kw = dict(
         task="regression", data_type="molecule",
         epochs=epochs, learning_rate=lr, batch_size=batch,
         early_stopping=max(5, epochs // 4), metrics="mae",
         kfold=1,   # we already do our OWN 5-fold OOF outside; unimol's internal kfold (default 5) would be 5x redundant compute
         smiles_col=SMILES, target_cols=TARGET, save_path=str(work),
     )
+    try:
+        clf = MolTrain(**kw, num_workers=num_workers)   # speed: parallel dataloader (if this unimol_tools accepts it)
+    except TypeError:
+        clf = MolTrain(**kw)                            # older unimol_tools: no such arg, fall back
     clf.fit(data=str(train_csv))
     predictor = MolPredict(load_model=str(work))
     results = {}
@@ -107,7 +111,8 @@ def main() -> None:
     ap.add_argument("--out-dir", type=Path, default=Path("unimol_out"))
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--lr", type=float, default=1e-4)
-    ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--batch", type=int, default=64, help="GPU batch (raised from 32; note conformer-gen CPU is the real bottleneck)")
+    ap.add_argument("--num-workers", type=int, default=8, help="dataloader workers (if this unimol_tools accepts it)")
     ap.add_argument("--tta", type=int, default=0, help="randomized-SMILES test-time augmentation (their aug10 => 10)")
     ap.add_argument("--accelerator", default="gpu")  # unimol_tools picks CUDA automatically when present
     ap.add_argument("--keep-reactive", action="store_true")
@@ -159,7 +164,7 @@ def main() -> None:
         train[tr_mask][[SMILES, TARGET]].to_csv(fold_train, index=False)
         # fit once on this fold's curated training set, predict the held-out broad rows (OOF)
         held = train[va_mask].reset_index(drop=True)
-        oof[va_mask] = _fit_predict(fold_train, {"held": held}, work, epochs, args.lr, args.batch)["held"]
+        oof[va_mask] = _fit_predict(fold_train, {"held": held}, work, epochs, args.lr, args.batch, args.num_workers)["held"]
         # test predictions from the SAME fitted model: plain, or averaged over `tta` randomized SMILES
         if tta:
             test_cols.append(_tta_predict(work, test[SMILES].tolist(), tta))
