@@ -2,7 +2,7 @@
 
 > Product design for an LLM-orchestrated molecular-property AutoML agent, with one North Star: **finishing Top 5 on openadmet/pxr-challenge**.
 
-> Rendered flowchart: [assets/workflow.png](assets/workflow.png) (see §9). The Mermaid source below also renders natively on GitHub or in a VS Code Mermaid-preview extension.
+> Rendered flowchart: [assets/workflow.png](../assets/workflow.png) (see §9). The Mermaid source below also renders natively on GitHub or in a VS Code Mermaid-preview extension.
 
 ---
 
@@ -257,7 +257,9 @@ Two published Activity-Track write-ups for *this* challenge, read directly:
 
 ### 9.1 Diagram
 
-Rendered image: **[assets/workflow.png](assets/workflow.png)**. Mermaid source (renders on GitHub / VS Code Mermaid preview):
+Rendered image: **[assets/workflow.png](../assets/workflow.png)**. Mermaid source (renders on GitHub / VS Code Mermaid preview):
+
+> Note: this diagram is the **abstract node structure** (product-level). It predates the fine-tuning phase and Architecture B, so for *what each node is driven by today* (LLM vs deterministic) and the fine-tune/stack reality, read **§0.1 Current state** and **TECH T1.2**. The parallel candidate chains shown here are the AIBuildAI target we have **not** yet built (see [AIBUILDAI.md](AIBUILDAI.md)).
 
 ```mermaid
 flowchart TD
