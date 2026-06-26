@@ -102,7 +102,9 @@ def _skill_finetune(ctx: Ctx, args: dict) -> tuple[str, str]:
             done += 1
         except Exception as e:
             print(f"    finetune {p.plan_id} failed: {type(e).__name__}: {str(e)[:80]}")
-    return f"fine-tuned {done} decorrelated foundation models (the performance lever)", src
+    # Honest wording: collect-only REUSES pre-computed predictions (no GPU training happened here).
+    verb = "loaded pre-computed predictions for" if ctx.collect_only else "fine-tuned (GPU)"
+    return f"{verb} {done} decorrelated foundation models (the performance lever)", src
 
 
 def _skill_stack(ctx: Ctx, args: dict) -> tuple[str, str]:
