@@ -30,9 +30,11 @@ ZENODO_API = "https://zenodo.org/api/records"
 # So we search all three sources; Zenodo is noisy, so we filter to model/software with chem keywords.
 _CHEM_KW = ("mol", "chem", "smiles", "drug", "compound", "graph", "ligand", "admet", "qsar")  # broad (zenodo titles)
 # Stricter set for GitHub: bare "mol"/"graph" let in software noise (moleculer, ansible/molecule,
-# cashapp/molecule). Require a real chemistry signal instead.
+# cashapp/molecule). Require a real chemistry signal instead. Also reused to tighten HF.
 _CHEM_KW_GH = ("molecular", "smiles", "chem", "drug discovery", "ligand", "qsar", "admet",
                "cheminform", "rdkit", "chembl", "bioactiv", "compound", "molecular property")
+# General chat/LLM markers — these get mis-named "drug-discovery-*" but are not molecular models.
+_LLM_CUES = ("qwen", "llama", "gpt-", "mistral", "gemma", "gguf", "-7b", "-14b", "-20b", "-70b")
 
 # Default sweep — several angles, because HF keyword search is narrow and one query misses most.
 DEFAULT_QUERIES = [
@@ -187,6 +189,11 @@ def discover_models(
                 tset = set(tags)
                 if tset & _BAD_TAGS and not (tset & _GOOD_TAGS):
                     continue  # pure generation/chat junk
+                hay = (mid + " " + " ".join(tags)).lower()
+                if any(c in hay for c in _LLM_CUES):
+                    continue  # general chat LLM mis-named for "drug discovery" (qwen/gpt/-14b/gguf...)
+                if not (tset & _GOOD_TAGS or any(k in hay for k in _CHEM_KW_GH)):
+                    continue  # no real chemistry signal -> skip (was: accept everything but chat junk)
                 by_id[mid] = Candidate(
                     model_id=mid, downloads=int(m.get("downloads", 0) or 0),
                     likes=int(m.get("likes", 0) or 0), tags=tags,
