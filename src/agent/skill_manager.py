@@ -62,9 +62,9 @@ def _skill_retrieve(ctx: Ctx, args: dict) -> tuple[str, str]:
     agent = RetrievalAgent()
     result = agent.run(ctx.state.get("setup") or {}, top_k=int(args.get("top_k", 12)),
                        out_path=ctx.run_dir / "retrieval_result.json")
-    ctx.state["candidates"] = result["selected"]          # downstream select/run reads these
+    ctx.state["candidates"] = result["selected"]          # downstream run reads these
     picks = ", ".join(f"{s.get('ref', '?').split('/')[-1]}:{s.get('mode')}" for s in result["selected"][:5])
-    return f"searched {result['n_discovered']} models (task-guided) -> selected: {picks}", agent.source
+    return f"searched {result['n_candidates']} models (task-guided) -> selected: {picks}", agent.source
 
 
 def _skill_design_menu(ctx: Ctx, args: dict) -> tuple[str, str]:
@@ -92,34 +92,69 @@ def _skill_design_menu(ctx: Ctx, args: dict) -> tuple[str, str]:
     return f"ran {done}/{len(plans)} menu plans (frozen featurizers — the weak baseline ~0.62)", src
 
 
-def _skill_finetune(ctx: Ctx, args: dict) -> tuple[str, str]:
+# Fine-tune epochs per templated backbone (from finetune_designer.BACKBONE_FACTS).
+_FT_EPOCHS = {"chemeleon": 50, "unimol": 15}
+# Validated decorrelated combo used when retrieval produced no candidates.
+_RUN_FALLBACK = [{"ref": "chemeleon", "family": "graph", "mode": "finetune"},
+                 {"ref": "unimol", "family": "3d", "mode": "finetune"}]
+
+
+def _frozen_featurizer(base: str, family: str, ref: str) -> tuple[str | None, dict]:
+    """Map a candidate to a frozen-embedding featurizer (None = can't run frozen here)."""
+    if base == "chemeleon":
+        return "chemeleon_embedding", {}
+    if family == "smiles":
+        return "chemberta_embedding", {"skill_ref": ref if "/" in ref else "DeepChem/ChemBERTa-77M-MTR"}
+    if family == "descriptor":
+        return "rdkit_descriptors", {}
+    return None, {}                                   # 3d/multiview frozen: no featurizer wired -> skip
+
+
+def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
+    """Execute the retrieval-selected candidates by their mode: finetune (template) or frozen (featurizer).
+
+    This replaces the old hardcoded {chemeleon, unimol} finetune skill — the models + modes now come
+    from `ctx.state['candidates']` (retrieval). Falls back to the validated decorrelated combo if empty.
+    """
     import subprocess
-    from src.agent.finetune_designer import FineTuneDesigner
-    from src.finetune_runner import build_command, collect_results
+    from src.cv_runner import run_plan_cv
+    from src.finetune_runner import TEMPLATES as FT_TEMPLATES, FineTunePlan, build_command, collect_results
+    from src.schemas import MenuPlan
     repo = ctx.data_dir.parent.parent
-    prior = [{"plan_id": k, "judge_rae": v.get("judge_rae")} for k, v in ctx.state["plans"].items() if isinstance(v, dict)]
-    designer = FineTuneDesigner()
-    plans = designer.propose(prior_results=prior)
-    src = designer.source                       # "llm" if the LLM picked the backbones, "fallback" if it 429'd
-    done = 0
-    for p in plans:
+    cands = ctx.state.get("candidates") or _RUN_FALLBACK
+    ran, skipped = 0, []
+    for c in cands:
+        ref = str(c.get("ref", "")); base = ref.split("/")[-1].lower()
+        family, mode = c.get("family", ""), c.get("mode", "frozen")
+        pid = f"{mode}_{base}"
+        if pid in ctx.state["plans"]:
+            continue
         try:
-            out_dir = (repo / "predictions") if ctx.collect_only else (Path("/tmp") / p.plan_id)
-            if not ctx.collect_only:
-                out_dir.mkdir(parents=True, exist_ok=True)
-                subprocess.run(build_command(p, repo, ctx.data_dir, out_dir), check=True)
-            pdir = collect_results(p, out_dir=out_dir, plans_root=ctx.run_dir / "plans",
-                                   folds_json=ctx.folds_json, train_csv=ctx.data_dir / "train.csv")
+            if mode == "finetune" and base in FT_TEMPLATES:
+                p = FineTunePlan(backbone=base, epochs=_FT_EPOCHS.get(base, 50), label=f"ft_{base}")
+                out_dir = (repo / "predictions") if ctx.collect_only else (Path("/tmp") / p.plan_id)
+                if not ctx.collect_only:
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    subprocess.run(build_command(p, repo, ctx.data_dir, out_dir), check=True)
+                pdir = collect_results(p, out_dir=out_dir, plans_root=ctx.run_dir / "plans",
+                                       folds_json=ctx.folds_json, train_csv=ctx.data_dir / "train.csv")
+            else:                                       # frozen: embedding featurizer + sklearn head
+                feat, params = _frozen_featurizer(base, family, ref)
+                if feat is None:
+                    skipped.append(f"{base}({mode}): no template/featurizer")
+                    continue
+                p = MenuPlan(plan_id=pid, name=pid, featurizer=feat, model="ridge", params=params)
+                pdir = ctx.run_dir / "plans" / pid
+                run_plan_cv(p, ctx.train_df, ctx.test_df, ctx.folds, out_dir=pdir,
+                            cache_dir=ctx.data_dir.parent / "featurizer_cache", refit_full=True)
             jr = judge_csv(pdir / "test_predictions.csv")["rae"]
-            ctx.state["plans"][p.plan_id] = {"dir": str(pdir), "judge_rae": jr,
-                                             "featurizer": f"finetune:{p.backbone}", "model": "finetune",
-                                             "params": {"epochs": p.epochs}}
-            done += 1
-        except Exception as e:
-            print(f"    finetune {p.plan_id} failed: {type(e).__name__}: {str(e)[:80]}")
-    # Honest wording: collect-only REUSES pre-computed predictions (no GPU training happened here).
-    verb = "loaded pre-computed predictions for" if ctx.collect_only else "fine-tuned (GPU)"
-    return f"{verb} {done} decorrelated foundation models (the performance lever)", src
+            ctx.state["plans"][pid] = {"dir": str(pdir), "judge_rae": jr,
+                                       "featurizer": f"{mode}:{base}", "model": mode, "params": {}}
+            ran += 1
+        except Exception as e:  # noqa: BLE001
+            skipped.append(f"{base}: {type(e).__name__}")
+    verb = "ran (collect-only)" if ctx.collect_only else "ran"
+    return f"{verb} {ran} candidate(s)" + (f"; skipped {skipped}" if skipped else ""), "deterministic"
 
 
 def _skill_stack(ctx: Ctx, args: dict) -> tuple[str, str]:
@@ -148,9 +183,11 @@ SKILLS = {
     "design_menu": {"executor": _skill_design_menu,
                     "desc": "Propose & run frozen featurizer×sklearn plans. LESSON: this is the WEAK baseline "
                             "(caps ~RAE 0.62 / rank 84) — useful only as cheap diverse stack members."},
-    "finetune": {"executor": _skill_finetune,
-                 "desc": "Fine-tune decorrelated foundation models (graph + 3D) and add to the pool. LESSON: "
-                         "THIS is the performance lever (0.62 -> 0.57 / rank 84 -> 20). Always do this."},
+    "run": {"executor": _skill_run,
+            "desc": "Execute the retrieval-selected candidates by their mode: finetune (templated graph/3D "
+                    "foundations — the performance lever, 0.62->0.57) or frozen (embedding + sklearn head). "
+                    "Reads ctx.state['candidates']; falls back to the validated graph+3D finetune combo. "
+                    "Run this after retrieve to add members to the pool."},
     "stack": {"executor": _skill_stack,
               "desc": "Ridge-stack the pool on OOF, judge on Set-1. LESSON: decorrelated members lower RAE; "
                       "correlated ones don't. Run after adding members to measure progress."},
@@ -219,9 +256,9 @@ class SkillManager(LLMJsonAgent):
             # LLM unavailable (e.g., 429 rate-limit on the free model): degrade gracefully, don't crash.
             # If we haven't fine-tuned yet, do the lever; else stack; else finish with what we have.
             print(f"[manager] LLM decide failed ({type(e).__name__}); heuristic fallback")
-            has_ft = any(str(v.get("model")) == "finetune" for v in ctx.state["plans"].values() if isinstance(v, dict))
-            if not has_ft:
-                return {"skill": "finetune", "reason": "fallback: fine-tune the decorrelated lever", "_source": "fallback"}
+            has_members = any(v.get("judge_rae") is not None for v in ctx.state["plans"].values() if isinstance(v, dict))
+            if not has_members:
+                return {"skill": "run", "reason": "fallback: run the decorrelated lever", "_source": "fallback"}
             if ctx.state.get("best") is None:
                 return {"skill": "stack", "reason": "fallback: stack the pool", "_source": "fallback"}
             return {"skill": "finish", "reason": "fallback: have a stacked result, stop", "_source": "fallback"}
