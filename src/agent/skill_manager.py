@@ -38,11 +38,25 @@ class Ctx:
     train_df: pd.DataFrame
     test_df: pd.DataFrame
     folds: object
+    brief_path: Path | None = None             # competition description the Setup agent reads
     collect_only: bool = False                 # fine-tune: reuse predictions/ instead of GPU (Mac testing)
-    state: dict = field(default_factory=lambda: {"plans": {}, "best": None, "log": []})
+    state: dict = field(default_factory=lambda: {"plans": {}, "best": None, "log": [], "setup": None})
 
 
 # --- skill executors (wrap existing code) ----------------------------------- #
+def _skill_setup(ctx: Ctx, args: dict) -> tuple[str, str]:
+    from src.agent.setup_agent import SetupAgent
+    brief = (Path(ctx.brief_path).read_text(encoding="utf-8")
+             if ctx.brief_path and Path(ctx.brief_path).exists()
+             else "Predict pEC50 (metric RAE) from a molecule's SMILES string.")
+    agent = SetupAgent()
+    report = agent.run(instruction=brief, data_dir=ctx.data_dir, out_path=ctx.run_dir / "setup_report.json")
+    ctx.state["setup"] = report                      # downstream reads schema/metric from here
+    s = report.get("schema", {})
+    return (f"task={report.get('task', {}).get('type')} metric={report.get('metric')} "
+            f"schema(smiles={s.get('smiles_col')}, target={s.get('target_col')}) status={report.get('status')}"), agent.source
+
+
 def _skill_retrieve(ctx: Ctx, args: dict) -> tuple[str, str]:
     from src.agent.hf_retrieval import discover_models
     cands = discover_models(top_k=int(args.get("top_k", 12)))
@@ -122,6 +136,9 @@ def _skill_stack(ctx: Ctx, args: dict) -> tuple[str, str]:
 
 
 SKILLS = {
+    "setup": {"executor": _skill_setup,
+              "desc": "Read the competition brief + data dir → infer task schema (smiles/target cols), "
+                      "metric, train/test files; deterministic validation + leak guard. Runs FIRST."},
     "retrieve": {"executor": _skill_retrieve,
                  "desc": "Live-search HuggingFace + frontier for foundation models, classified by family "
                          "(graph/3D/SMILES). LESSON: the strong, decorrelated families are graph (CheMeleon) "
@@ -149,6 +166,14 @@ class SkillManager(LLMJsonAgent):
             with log_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(entry) + "\n")
 
+        # Step 0 — Setup ALWAYS runs first (mirrors AIBuildAI: Setup precedes the loop).
+        result, ssrc = SKILLS["setup"]["executor"](ctx, {})
+        print(f"[step 0] setup  | skill-source={ssrc}\n           {result}")
+        record({"step": 0, "skill": "setup", "manager_decision": "forced-first", "skill_source": ssrc, "result": result})
+        if (ctx.state.get("setup") or {}).get("status") != "ok":
+            print("[manager] setup did not validate — aborting before the loop")
+            return ctx.state
+
         for step in range(1, max_steps + 1):
             d = self._decide(ctx, step, max_steps)
             skill, args, reason, dsrc = d.get("skill"), d.get("args", {}), d.get("reason", ""), d.get("_source", "llm")
@@ -165,7 +190,10 @@ class SkillManager(LLMJsonAgent):
     def _decide(self, ctx: Ctx, step: int, max_steps: int) -> dict:
         best = ctx.state.get("best")
         pool = [(k, v.get("judge_rae")) for k, v in ctx.state["plans"].items() if isinstance(v, dict)]
-        skills_doc = "\n".join(f"  - {n}: {s['desc']}" for n, s in SKILLS.items())
+        skills_doc = "\n".join(f"  - {n}: {s['desc']}" for n, s in SKILLS.items() if n != "setup")  # setup already ran
+        setup = ctx.state.get("setup") or {}
+        task_line = (f"Task (from setup): type={setup.get('task', {}).get('type')}, "
+                     f"metric={setup.get('metric')}, target={setup.get('schema', {}).get('target_col')}.")
         system = (
             "You are the MANAGER of an AutoML pipeline for molecular pEC50 regression (metric RAE, lower=better). "
             "Each step you pick ONE skill to run next, given the state. The skill descriptions encode hard-won "
@@ -173,7 +201,7 @@ class SkillManager(LLMJsonAgent):
             'Reply ONLY JSON: {"skill": <name|"finish">, "args": {..}, "reason": ".."}.'
         )
         user = (
-            f"Step {step}/{max_steps}. Skills:\n{skills_doc}\n\n"
+            f"Step {step}/{max_steps}. {task_line}\nSkills:\n{skills_doc}\n\n"
             f"State: pool has {len(pool)} members; best stacked judge RAE = {best['judge_rae'] if best else 'none'}.\n"
             f"Recent log: {json.dumps(ctx.state['log'][-3:])}\n\n"
             "Pick the next skill that will most lower the stacked RAE (remember: fine-tuning decorrelated "
