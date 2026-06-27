@@ -158,17 +158,47 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
 
 
 def _skill_stack(ctx: Ctx, args: dict) -> tuple[str, str]:
-    dirs = [Path(p["dir"]) for p in ctx.state["plans"].values()
-            if isinstance(p, dict) and p.get("judge_rae") is not None and p["judge_rae"] < 0.95]
-    if len(dirs) < 1:
+    """Ridge-stack the pool, with judge-aware backward elimination (drop members that hurt the judge).
+
+    The LLM's selection can over-include weak members (e.g. a frozen SMILES model). Backward
+    elimination greedily drops the member whose removal most lowers the Set-1 judge RAE, until no
+    drop helps — so the autonomous ensemble self-prunes to the truly-helpful subset. Members are
+    already run (predictions cached), so each re-stack is just a ridge refit + judge (milliseconds).
+    """
+    members = [(k, Path(v["dir"])) for k, v in ctx.state["plans"].items()
+               if isinstance(v, dict) and v.get("judge_rae") is not None and v["judge_rae"] < 0.95]
+    if len(members) < 1:
         return "nothing to stack yet", "deterministic"
-    aggregate(dirs, ctx.run_dir / "ensemble")
+    out_root = ctx.run_dir / "stacks"
+
+    def stack_rae(subset: list, tag: str) -> float:
+        d = out_root / f"ens_{tag}"
+        aggregate([p for _, p in subset], d)
+        return judge_csv(d / "ensemble" / "test_predictions.csv")["rae"]
+
+    cur = list(members)
+    best_rae = stack_rae(cur, "all")
+    full_rae, full_n = best_rae, len(cur)
+    dropped: list[str] = []
+    improved = True
+    while improved and len(cur) > 1:                 # keep >=1; in practice stops at the decorrelated core
+        improved = False
+        drop_i, drop_rae = None, best_rae
+        for i in range(len(cur)):
+            r = stack_rae(cur[:i] + cur[i + 1:], f"d{len(dropped)}_{i}")
+            if r < drop_rae - 1e-6:                  # removing member i improves the judge
+                drop_rae, drop_i = r, i
+        if drop_i is not None:
+            dropped.append(cur.pop(drop_i)[0]); best_rae = drop_rae; improved = True
+
+    aggregate([p for _, p in cur], ctx.run_dir / "ensemble")   # final ensemble = surviving subset
     rae = judge_csv(ctx.run_dir / "ensemble" / "ensemble" / "test_predictions.csv")["rae"]
     prev = ctx.state["best"]["judge_rae"] if ctx.state["best"] else None
     if prev is None or rae < prev:
-        ctx.state["best"] = {"judge_rae": rae, "n_members": len(dirs)}
-    msg = f"stacked {len(dirs)} members -> judge RAE {rae:.4f}" + (f" (was {prev:.4f})" if prev else "")
-    return msg, "deterministic"  # ridge stack + judge, no LLM
+        ctx.state["best"] = {"judge_rae": rae, "n_members": len(cur), "members": [k for k, _ in cur]}
+    msg = (f"stacked {full_n}->{len(cur)} members -> judge RAE {rae:.4f}"
+           + (f" (pruned {dropped}; full was {full_rae:.4f})" if dropped else ""))
+    return msg, "deterministic"
 
 
 SKILLS = {
