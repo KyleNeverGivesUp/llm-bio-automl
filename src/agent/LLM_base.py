@@ -4,7 +4,7 @@ import json
 import os
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib import error, request
 
@@ -32,17 +32,38 @@ class LLMConfig:
     app_name: str
     max_tokens: int
     temperature: float
+    timeout: float = 60.0   # seconds; a slow/congested (free) endpoint fails fast -> rotate/fall back
+    models: list[str] = field(default_factory=list)   # rotation: tried in order on 429/timeout
+
+
+# Free models to rotate through when one is rate-limited (verified live on OpenRouter). The shared
+# free endpoints get throttled upstream independently, so trying the next usually succeeds.
+_FREE_ROTATION = [
+    "openai/gpt-oss-120b:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "openai/gpt-oss-20b:free",
+]
 
 
 def load_llm_config() -> LLMConfig:
+    model = os.environ.get("OPENROUTER_MODEL", _FREE_ROTATION[0])
+    models_env = os.environ.get("OPENROUTER_MODELS", "").strip()
+    if models_env:                                    # explicit override, comma-separated
+        models = [m.strip() for m in models_env.split(",") if m.strip()]
+    else:                                             # primary first, then the rest of the free rotation
+        models = [model] + [m for m in _FREE_ROTATION if m != model]
     return LLMConfig(
         base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
         api_key=os.environ.get("OPENROUTER_API_KEY", "YOUR_OPENROUTER_API_KEY"),
-        model=os.environ.get("OPENROUTER_MODEL", "minimax/minimax-m2.5:free"),
+        model=model,
         site_url=os.environ.get("OPENROUTER_SITE_URL", "http://localhost"),
         app_name=os.environ.get("OPENROUTER_APP_NAME", "llm-bio-automl"),
         max_tokens=int(os.environ.get("OPENROUTER_MAX_TOKENS", "2000")),
         temperature=float(os.environ.get("OPENROUTER_TEMPERATURE", "0")),
+        timeout=float(os.environ.get("OPENROUTER_TIMEOUT", "60")),
+        models=models,
     )
 
 
@@ -102,37 +123,43 @@ class LLMJsonAgent(BaseAgent):
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def call_json(self, system_prompt: str, user_prompt: str) -> dict:
-        payload = {
-            "model": self.config.model,
-            "temperature": self.config.temperature,
-            "max_tokens": self.max_tokens,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
-        body = json.dumps(payload).encode("utf-8")
+    def _post_rotating(self, messages: list[dict]) -> dict:
+        """POST the chat request, rotating through config.models on rate-limit/timeout/overload.
+
+        The free endpoints are throttled upstream independently, so when one 429s the next usually
+        works. Returns the raw response dict; raises only if EVERY model fails (caller then falls back).
+        """
+        models = self.config.models or [self.config.model]
         headers = {
             "Authorization": f"Bearer {self.config.api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": self.config.site_url,
             "X-Title": self.config.app_name,
         }
-        req = request.Request(
-            url=f"{self.config.base_url}/chat/completions",
-            data=body,
-            headers=headers,
-            method="POST",
-        )
+        last_err: Exception | None = None
+        for i, model in enumerate(models):
+            payload = {"model": model, "temperature": self.config.temperature,
+                       "max_tokens": self.max_tokens, "messages": messages}
+            req = request.Request(url=f"{self.config.base_url}/chat/completions",
+                                  data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+            try:
+                with request.urlopen(req, timeout=self.config.timeout) as resp:
+                    raw = json.loads(resp.read().decode("utf-8"))
+                if i:
+                    print(f"[LLM] rotated to {model} (previous {i} model(s) rate-limited/failed)")
+                return raw
+            except error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="ignore")
+                last_err = RuntimeError(f"OpenRouter {model} failed: {exc.code} {detail[:100]}")
+            except Exception as exc:  # timeout / network — rotate to next model
+                last_err = RuntimeError(f"OpenRouter {model} error: {exc}")
+        raise last_err or RuntimeError("all models failed")
 
-        try:
-            with request.urlopen(req) as resp:
-                raw = json.loads(resp.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="ignore")
-            raise RuntimeError(f"OpenRouter request failed: {exc.code} {detail}") from exc
-
+    def call_json(self, system_prompt: str, user_prompt: str) -> dict:
+        raw = self._post_rotating([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ])
         text = self._extract_text_content(raw)
         return self._extract_json(text)
 
@@ -159,27 +186,7 @@ class LLMJsonAgent(BaseAgent):
         }
 
         try:
-            body = json.dumps(request_payload).encode("utf-8")
-            headers = {
-                "Authorization": f"Bearer {self.config.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": self.config.site_url,
-                "X-Title": self.config.app_name,
-            }
-            req = request.Request(
-                url=f"{self.config.base_url}/chat/completions",
-                data=body,
-                headers=headers,
-                method="POST",
-            )
-
-            try:
-                with request.urlopen(req) as resp:
-                    raw = json.loads(resp.read().decode("utf-8"))
-            except error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="ignore")
-                raise RuntimeError(f"OpenRouter request failed: {exc.code} {detail}") from exc
-
+            raw = self._post_rotating(request_payload["messages"])  # rotates models on 429/timeout
             text = self._extract_text_content(raw)
             parsed = self._extract_json(text)
 

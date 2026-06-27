@@ -6,10 +6,16 @@
 
 | Field | Value |
 |---|---|
-| Version | v1.0 |
-| Status | Draft (ready to implement M0→M1) |
+| Version | v1.7 |
+| Status | Live (best Set-1 judge RAE **0.5706**); see T1.2 for the current module reality |
 | Owner | Kyle |
 | Created | 2026-06-20 |
+| Updated | 2026-06-26 |
+
+> **Reading note (2026-06-26):** sections T1 / T3 / T4 below were written as the system was *planned* (M0→M4),
+> so their "new (M1)" / "rewrite (M3)" statuses are historical. For **what actually runs today** — including
+> Architecture B (the LLM Manager), LLM-orchestrated fine-tuning, and live retrieval — read **T1.2** and the
+> PRD's **§0.1 Current state**. AIBuildAI (the agent-loop reference) is in **[AIBUILDAI.md](AIBUILDAI.md)**.
 
 ---
 
@@ -91,6 +97,42 @@ The repo uses a **two-layer** design, so files come in worker↔wrapper pairs (e
 | `manager_agent.py` | fixed linear pipeline (no real decision loop) | 🔁 refactor (M3) |
 | `designer_agent.py` | **stubbed** — returns 1 fixed plan, never calls the LLM | 💀 dead → rewrite (M3) |
 | `test_openrouter.py`, `test_retrieval.py` | smoke scripts | 🧪 scratch |
+
+### T1.2 Current module reality (2026-06-26) — what actually runs
+
+The clean `MenuPlan`-based modules (not the original `PlanSpec`/`runner` ones) are what run today. There are
+**two orchestrators**, both reaching the best stack (Set-1 judge RAE **0.5706**):
+
+- **`scripts/run_auto.py`** — the *menu loop*: LLM Designer → deterministic CV runner → select → stack → judge,
+  now also running a **fine-tune phase** + live retrieval.
+- **`scripts/run_skill_manager.py`** → **`src/agent/skill_manager.py`** — **Architecture B**: an LLM **Manager**
+  reads lesson-encoded skills + state and **decides the next skill itself** (retrieve/design_menu/finetune/stack)
+  until `finish`, logging each step's source to `outputs/skill_manager/stage_log.jsonl`.
+
+| Pipeline stage | Module(s) | Driver |
+|---|---|---|
+| **Data / curation** | `src/data_io.py`, `src/curation.py` (reactive-electrophile SMARTS exclusion) | deterministic |
+| **CV folds** | `src/cv_split.py`; calibrated cluster folds `data/pxr_activity/folds_calibrated.json` | deterministic |
+| **Live retrieval** | `src/agent/hf_retrieval.py` (`discover_models`) + `scripts/discover_models.py` → `candidates_live.json` | deterministic (HF HTTP) |
+| **Designer (menu)** | `src/agent/menu_designer.py` (`MenuDesigner`) + `src/menu_config.py` (registries) | 🤖 **LLM** + fallback |
+| **Fine-tune Designer** | `src/agent/finetune_designer.py` (`FineTuneDesigner`) — picks decorrelated backbones+epochs | 🤖 **LLM** + validated fallback |
+| **Coder / execution (menu)** | `src/cv_runner.py` (`run_plan_cv`) — featurize→train→OOF+test | deterministic |
+| **Coder / execution (fine-tune)** | `src/finetune_runner.py` (`build_command`→GPU, `collect_results`) wrapping verified **templates** `scripts/finetune_cheme_mt5.py` (CheMeleon graph) + `scripts/finetune_unimol.py` (Uni-Mol 3D) | deterministic (template-based codegen) |
+| **Selector** | `src/selector.py` | deterministic |
+| **Tuner** | `src/agent/menu_tuner.py` (`MenuTuner`) | 🤖 **LLM** + fallback |
+| **Aggregator (stack)** | `src/aggregator.py` (`aggregate`, ridge stack) | deterministic |
+| **Judge (reward)** | `src/analog_judge.py` (`judge_csv` — Set-1 RAE/MAE) | deterministic |
+| **Manager (Architecture B)** | `src/agent/skill_manager.py` (`SkillManager`, `Ctx`, `SKILLS`) | 🤖 **LLM decision loop** + heuristic fallback |
+| **LLM transport** | `src/agent/LLM_base.py` (OpenRouter; `.env` `OPENROUTER_MODEL`; 60s timeout; per-call fallback) | infra |
+
+**`--collect-only` vs real (important):** in `--collect-only` the fine-tune execution **reuses** pre-computed
+predictions in `predictions/` (no GPU) and is used to verify the *orchestration* on a Mac. A **real** run drops
+`--collect-only` and trains each backbone on the **DSMLP A5000** (~2h/backbone). The 0.5706 reproduced on the Mac
+is the orchestration over *already-trained* predictions, not a from-scratch GPU run.
+
+**Boundary of LLM autonomy (vs AIBuildAI):** the LLM decides *what* (which plan, which backbone/epochs, which
+skill next); the *training code* is a **verified template per backbone**, not free codegen. Closing that — plus
+**parallel candidate chains** — are the two gaps to AIBuildAI's Coder/Manager (see [AIBUILDAI.md](AIBUILDAI.md)).
 
 ---
 
@@ -324,6 +366,18 @@ Pipeline: deep-research the documented top solutions → extract winning techniq
 - [ ] **Mordred + FCFP4-count features** (LOW) for the GBDT branch; **prune ensemble members with OOF-corr > 0.9** to the blend.
 - [ ] **End-game:** Set-1 fold-in (consumes the judge — last) + **mandatory method report** (no report = not ranked).
 - **DoD:** best Set-1 judge RAE recorded; recipe frozen + report submitted by July 1. **Target = top-5 — genuinely achievable on public data** (per §8 most top-5 entries used no proprietary data); the gap to the lead pack (~0.50) is **execution depth** (full multitask + counter + calibration + Phase-2 fold-in), not data access.
+
+### M7 — Decorrelated foundations + Architecture B  (approach: **Approach 1 + LLM orchestration**)  ← current
+The frozen-menu ceiling (~0.62) was broken by **fine-tuning two decorrelated foundation families and stacking**, then the whole loop was made LLM-driven and observable.
+
+- [x] **Multitask CheMeleon fine-tune** — `scripts/finetune_cheme_mt5.py`: 5 targets (pEC50 + counter_pEC50 + Emax + counter_Emax + single-conc log2fc) + **MAE loss** + reactive-electrophile exclusion (`src/curation.py`). Single **0.5904**.
+- [x] **Decorrelated 3D member** — `scripts/finetune_unimol.py`: Uni-Mol 3D, `kfold=1`, ~15 epochs. Single **0.6248**, corr(unimol, cheme)=**0.866**. Ridge-stack of the two → **0.5706** (beats the old 48-base correlated ensemble). TTA verified **negative for the stack** (smooths → more correlated) and kept off.
+- [x] **LLM-orchestrated fine-tuning** — `src/agent/finetune_designer.py` (`FineTuneDesigner.propose` — LLM picks decorrelated backbones+epochs from a fixed `{chemeleon, unimol}` list; validated fallback) + `src/finetune_runner.py` (`FineTunePlan`, `build_command` plan→GPU cmd, `collect_results` → aggregator). `scripts/run_finetune_auto.py` runs it end-to-end (reproduces 0.5706). Wired into `run_auto.py --finetune`.
+- [x] **Architecture B — LLM Manager** — `src/agent/skill_manager.py` (`SkillManager`): reads lesson-encoded skills + state → decides the next skill (retrieve/design_menu/finetune/stack) until `finish`. `scripts/run_skill_manager.py` (`--collect-only` for no-GPU). **Per-stage observability** → `stage_log.jsonl` tags every step `llm`/`fallback`/`deterministic`. Verified: LLM Manager autonomously finetune→stack→**0.5706** (all-`llm`, 0 fallback) on the free model after the `LLM_base` request-timeout fix.
+- [x] **Live retrieval** — `src/agent/hf_retrieval.py` + `scripts/discover_models.py` → `candidates_live.json` (replaces the static manifest).
+- [ ] **Parallel candidate chains** + **code-writing Coder** — the two AIBuildAI gaps ([AIBUILDAI.md](AIBUILDAI.md)).
+- [ ] **End-game:** real DSMLP GPU run through Architecture B (not `--collect-only`); Set-1 fold-in (last); **method report (July 1)**.
+- **DoD:** RAE clearly under the field (**0.5706 ≈ rank ~20**, backed up at tag `v1-working`); the loop is LLM-driven & per-stage observable; report by July 1.
 
 ---
 

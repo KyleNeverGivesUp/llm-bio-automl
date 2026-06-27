@@ -22,6 +22,17 @@ import urllib.request
 from dataclasses import dataclass, field
 
 HF_API = "https://huggingface.co/api/models"
+GITHUB_API = "https://api.github.com/search/repositories"
+ZENODO_API = "https://zenodo.org/api/records"
+
+# The strong molecular foundation models (CheMeleon, Uni-Mol, MolE) are NOT on the HF Hub — they
+# live on GitHub (code) + Zenodo (weights). HF keyword search only surfaces weak/auxiliary models.
+# So we search all three sources; Zenodo is noisy, so we filter to model/software with chem keywords.
+_CHEM_KW = ("mol", "chem", "smiles", "drug", "compound", "graph", "ligand", "admet", "qsar")  # broad (zenodo titles)
+# Stricter set for GitHub: bare "mol"/"graph" let in software noise (moleculer, ansible/molecule,
+# cashapp/molecule). Require a real chemistry signal instead.
+_CHEM_KW_GH = ("molecular", "smiles", "chem", "drug discovery", "ligand", "qsar", "admet",
+               "cheminform", "rdkit", "chembl", "bioactiv", "compound", "molecular property")
 
 # Default sweep — several angles, because HF keyword search is narrow and one query misses most.
 DEFAULT_QUERIES = [
@@ -95,31 +106,100 @@ def _score(downloads: int, likes: int, tags: set[str]) -> float:
     return 2.0 * good - 3.0 * bad + pop + 0.2 * math.log10(likes + 1)
 
 
+def _github_search(query: str, limit: int) -> list[Candidate]:
+    """Search GitHub repos — this is where strong models (CheMeleon, Uni-Mol) live as code.
+
+    Unauthenticated GitHub search is 10 req/min (easily exhausted). Set GITHUB_TOKEN in the env for
+    a 30/min authenticated limit — strongly recommended for repeated runs.
+    """
+    import math
+    import os
+    url = GITHUB_API + "?" + urllib.parse.urlencode({"q": query, "sort": "stars", "per_page": limit})
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "llm-bio-automl"}
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            items = json.load(r).get("items", [])
+    except Exception as exc:  # rate limit (60/hr unauth) or network — skip this source for this query
+        print(f"[hf_retrieval] github {query!r} failed: {exc}")
+        return []
+    out = []
+    for it in items:
+        name = it.get("full_name", "")
+        desc = it.get("description") or ""
+        if not any(k in (name + " " + desc).lower() for k in _CHEM_KW_GH):
+            continue  # off-topic repo (strict filter drops molecule-named non-chem software)
+        stars = int(it.get("stargazers_count", 0) or 0)
+        out.append(Candidate(model_id=name, downloads=stars, library="github",
+                             family=_classify_family(name, [desc]),
+                             score=2.0 + math.log10(stars + 10)))  # github bonus + star popularity
+    return out
+
+
+def _zenodo_search(query: str, limit: int) -> list[Candidate]:
+    """Search Zenodo — where the weights live (CheMeleon, Uni-Mol, MolE). Noisy → filter hard."""
+    url = ZENODO_API + "?" + urllib.parse.urlencode({"q": query, "size": limit})
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            hits = json.load(r).get("hits", {}).get("hits", [])
+    except Exception as exc:
+        print(f"[hf_retrieval] zenodo {query!r} failed: {exc}")
+        return []
+    out = []
+    for h in hits:
+        md = h.get("metadata", {})
+        rtype = md.get("resource_type", {}).get("type", "")
+        title = md.get("title", "")
+        if rtype not in ("model", "software"):           # drop publications/images/datasets noise
+            continue
+        if not any(k in title.lower() for k in _CHEM_KW):
+            continue
+        out.append(Candidate(model_id=title[:70], downloads=0, library="zenodo", tags=[rtype],
+                             family=_classify_family(title, []), score=1.8))
+    return out
+
+
 def discover_models(
     queries: list[str] | None = None,
     limit_each: int = 25,
     top_k: int = 20,
     min_score: float = 0.0,
+    sources: tuple[str, ...] = ("hf", "github", "zenodo"),
 ) -> list[Candidate]:
-    """Live-search the Hub across several queries; return deduped, family-tagged, ranked candidates."""
+    """Multi-source live search (HF + GitHub + Zenodo); deduped, family-tagged, ranked candidates.
+
+    HF surfaces mostly weak models; GitHub/Zenodo are where the strong foundation models live
+    (CheMeleon, Uni-Mol, MolE). github/zenodo only queried for the first few queries to respect
+    GitHub's unauthenticated rate limit.
+    """
     queries = queries or DEFAULT_QUERIES
     by_id: dict[str, Candidate] = {}
-    for q in queries:
-        for m in _hf_get(q, limit_each):
-            mid = m.get("id")
-            if not mid or mid in by_id:
-                continue
-            tags = m.get("tags", []) or []
-            tset = set(tags)
-            if tset & _BAD_TAGS and not (tset & _GOOD_TAGS):
-                continue  # pure generation/chat junk
-            by_id[mid] = Candidate(
-                model_id=mid, downloads=int(m.get("downloads", 0) or 0),
-                likes=int(m.get("likes", 0) or 0), tags=tags,
-                library=m.get("library_name", "") or "",
-                family=_classify_family(mid, tags),
-                score=_score(int(m.get("downloads", 0) or 0), int(m.get("likes", 0) or 0), tset),
-            )
+    for qi, q in enumerate(queries):
+        if "hf" in sources:
+            for m in _hf_get(q, limit_each):
+                mid = m.get("id")
+                if not mid or mid in by_id:
+                    continue
+                tags = m.get("tags", []) or []
+                tset = set(tags)
+                if tset & _BAD_TAGS and not (tset & _GOOD_TAGS):
+                    continue  # pure generation/chat junk
+                by_id[mid] = Candidate(
+                    model_id=mid, downloads=int(m.get("downloads", 0) or 0),
+                    likes=int(m.get("likes", 0) or 0), tags=tags,
+                    library=m.get("library_name", "") or "",
+                    family=_classify_family(mid, tags),
+                    score=_score(int(m.get("downloads", 0) or 0), int(m.get("likes", 0) or 0), tset),
+                )
+        if qi < 3:  # GitHub/Zenodo only for the top few queries (API budget)
+            extra = (_github_search(q, 5) if "github" in sources else []) + \
+                    (_zenodo_search(q, 5) if "zenodo" in sources else [])
+            for c in extra:
+                if c.model_id not in by_id:
+                    by_id[c.model_id] = c
     ranked = sorted(by_id.values(), key=lambda c: -c.score)
     return [c for c in ranked if c.score >= min_score][:top_k]
 

@@ -18,4 +18,4 @@ data
 outputs/
 
 # Scratch / temp artifacts
-tmp_*
+tmp_*skills/models/registry.json

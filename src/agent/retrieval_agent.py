@@ -1,418 +1,160 @@
-"""Choose the retrieval strategy for the current task."""
+"""Retrieval Agent (LLM-driven, task-guided, local-first + self-growing) — the model-search node.
+
+After Setup tells us the task, this agent searches for suitable models *on purpose*, local-first:
+  ① LLM PLANS the search from the task — which representation families + HF search terms suit it;
+  ② search the LOCAL library first (`skills/models/registry.json`);
+  ③ LLM JUDGES satisfaction — is the local library enough, or should we search online?
+  ④ if not satisfied → live HuggingFace search, then WRITE-BACK new finds to the local library
+     (so the next similar task is served locally — the library grows / "learns");
+  ⑤ LLM RANKS the candidates for THIS task and recommends a mode — frozen (any model) or
+     finetune (only models with a verified template; code enforces this).
+
+Principle: every JUDGMENT is the LLM's (plan / satisfaction / rank), each with a deterministic
+fallback; the EXECUTION (search the registry, HF search, write-back) is plain code.
+"""
+
+from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
-
+from src.agent import model_registry
 from src.agent.LLM_base import LLMJsonAgent
-from src.agent.agent_context import AgentResult, RunContext
-from src.schemas import TaskInference
+from src.agent.hf_retrieval import DEFAULT_QUERIES, discover_models
+
+# Models we have a verified FINE-TUNE template for. Anything else is frozen-only.
+TEMPLATED = {"chemeleon": "graph", "unimol": "3d"}
 
 
 class RetrievalAgent(LLMJsonAgent):
     name = "retrieval"
+    source: str = "unknown"
 
-    def _infer_task_heuristic(self, task_spec: dict) -> TaskInference:
-        title = str(task_spec.get("task_title") or "")
-        description = str(task_spec.get("task_description") or "")
-        target_column = str(task_spec.get("target_column") or "")
-        primary_metric = str(task_spec.get("primary_metric") or "")
-        submission_columns = " ".join(
-            str(column) for column in (task_spec.get("submission_columns") or [])
+    def run(self, setup_report: dict, top_k: int = 12, out_path: str | Path | None = None) -> dict:
+        task = self._task_brief(setup_report)
+        plan = self._plan(task)                                       # ① LLM: families + queries
+        families = plan.get("families") or []
+
+        local_hits = model_registry.search(families)                 # ② local-first
+        sat = self._judge_satisfaction(task, families, local_hits)   # ③ LLM: satisfied?
+
+        went_online, n_added = False, 0
+        if not sat.get("satisfied"):
+            # task-specific LLM queries + generic sweep, so a narrow query set still yields finds to cache
+            queries = list(dict.fromkeys((plan.get("queries") or []) + list(DEFAULT_QUERIES)))
+            hf = discover_models(queries=queries, top_k=top_k)
+            n_added = model_registry.add([self._to_entry(c) for c in hf])   # ④ write-back (grow library)
+            went_online = True
+            local_hits = model_registry.search(families) or model_registry.load()
+
+        candidates = [self._mark(m) for m in local_hits]
+        ranked = self._rank(task, candidates, plan)                  # ⑤ LLM: select + mode
+
+        result = {"task": task, "search_plan": plan, "satisfaction": sat,
+                  "went_online": went_online, "n_added_to_library": n_added,
+                  "n_candidates": len(candidates), "selected": ranked, "source": self.source}
+        if out_path:
+            Path(out_path).write_text(json.dumps(result, indent=2), encoding="utf-8")
+        return result
+
+    def _task_brief(self, setup_report: dict) -> dict:
+        t = (setup_report or {}).get("task", {})
+        return {"type": t.get("type"), "domain": t.get("domain"), "summary": t.get("summary"),
+                "metric": (setup_report or {}).get("metric"),
+                "target": (setup_report or {}).get("schema", {}).get("target_col")}
+
+    # ① LLM plans WHAT to search for ----------------------------------------------------------- #
+    def _plan(self, task: dict) -> dict:
+        system = (
+            "You plan a pretrained-model search for an AutoML pipeline (searches HuggingFace + GitHub + "
+            "Zenodo). Given the task, decide what KINDS of models suit it AND name specific models to find. "
+            "For families, use ONLY this fixed vocabulary: graph, 3d, smiles, descriptor, multiview. "
+            'Reply ONLY JSON: {"queries":[..],"families":[..from vocabulary..],"rationale":..}'
         )
-        text = " ".join(
-            [title, description, target_column, primary_metric, submission_columns]
-        ).lower()
-
-        if "smiles" in text or "molecule" in text or "pec50" in text:
-            return TaskInference(
-                task_domain="chemistry",
-                task_modality="smiles",
-                task_type="regression",
-                reason=(
-                    "Heuristic fallback inferred a chemistry regression task because the "
-                    "task references SMILES or molecules and predicts a continuous activity value."
-                ),
-            )
-
-        if "protein" in text and ("sequence" in text or "structure" in text):
-            return TaskInference(
-                task_domain="protein",
-                task_modality="protein_sequence" if "sequence" in text else "protein_structure",
-                task_type="regression" if "regression" in text else "classification",
-                reason="Heuristic fallback inferred a protein task from the task description.",
-            )
-
-        if "dna" in text or "rna" in text or "genomic" in text:
-            return TaskInference(
-                task_domain="genomics",
-                task_modality="genomics_sequence",
-                task_type="regression" if "regression" in text else "classification",
-                reason="Heuristic fallback inferred a genomics task from the task description.",
-            )
-
-        return TaskInference(
-            task_domain="chemistry",
-            task_modality="smiles",
-            task_type="regression",
-            reason=(
-                "Heuristic fallback defaulted to chemistry regression because the project "
-                "currently targets small-molecule property prediction."
-            ),
+        user = (
+            f"Task: {json.dumps(task)}\n\n"
+            "Propose search queries + representation families (graph/3d/smiles/descriptor/multiview) for THIS "
+            "task; prefer DECORRELATED families (they stack better). For queries, include the NAMES of specific "
+            "strong pretrained molecular foundation models you know that fit this task — from YOUR knowledge "
+            "(the best ones often live on GitHub/Zenodo, not HuggingFace, so naming them is how we find them). "
+            "CRITICAL: each query must be SHORT — ONE model name or ONE concept, 1-3 words (e.g. 'ChemProp', "
+            "'Uni-Mol', 'GROVER', 'MolE'), NOT a long combined string. Give ~8-12 such short queries. "
+            "Return ONLY JSON."
         )
+        try:
+            out = self.call_json(system, user)
+            if isinstance(out, dict) and out.get("queries"):
+                self.source = "llm"
+                return out
+        except Exception as e:  # noqa: BLE001
+            print(f"[retrieval] search-plan LLM failed ({e}); default sweep")
+        self.source = "fallback"
+        return {"queries": list(DEFAULT_QUERIES), "families": ["graph", "3d", "smiles"],
+                "rationale": "fallback: generic molecular sweep"}
 
-    def _extract_description(self, skill_text: str) -> str:
-        front_matter_match = re.search(
-            r"^---\s*\n(.*?)\n---\s*\n",
-            skill_text,
-            flags=re.DOTALL,
-        )
-        if front_matter_match:
-            front_matter = front_matter_match.group(1)
-            desc_match = re.search(r'^description:\s*(.+)$', front_matter, flags=re.MULTILINE)
-            if desc_match:
-                return desc_match.group(1).strip().strip('"').strip("'")
+    # ③ LLM judges whether the local library is enough ----------------------------------------- #
+    def _judge_satisfaction(self, task: dict, families: list[str], local_hits: list[dict]) -> dict:
+        try:
+            system = ("You decide if the LOCAL model library is sufficient for the task, or we should "
+                      'search online for more. Reply ONLY JSON: {"satisfied":true|false,"reason":..}')
+            user = (f"Task: {json.dumps(task)}\nNeeded families: {families}\n"
+                    f"Local models: {json.dumps([{'ref': m.get('ref'), 'family': m.get('family')} for m in local_hits])}\n\n"
+                    "Is the local library enough to build a strong solution (good coverage of the needed "
+                    "decorrelated families)? Or should we search online for more? Return ONLY JSON.")
+            out = self.call_json(system, user)
+            if isinstance(out, dict) and "satisfied" in out:
+                out["source"] = "llm"
+                return out
+        except Exception as e:  # noqa: BLE001
+            print(f"[retrieval] satisfaction LLM failed ({e}); deterministic family-coverage fallback")
+        covered = {str(m.get("family", "")).lower() for m in local_hits}
+        need = {f.lower() for f in (families or [])}
+        return {"satisfied": bool(local_hits) and need.issubset(covered),
+                "reason": f"family coverage {sorted(covered)} vs needed {sorted(need)}", "source": "fallback"}
 
-        for line in skill_text.splitlines():
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#"):
-                return stripped[:300]
-
-        return ""
-
-    def _load_skill_catalog(self) -> list[dict]:
-        manifest_path = Path("skills/models/manifest.json")
-        if not manifest_path.exists():
-            return []
-
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        catalog: list[dict] = []
-
-        for item in manifest.get("skills", []):
-            skill_path = Path(item["path"])
-            description = ""
-            if skill_path.exists():
-                description = self._extract_description(skill_path.read_text(encoding="utf-8"))
-
-            catalog.append(
-                {
-                    "ref": item["ref"],
-                    "domain": item["domain"],
-                    "path": str(skill_path),
-                    "description": description,
-                }
+    # ⑤ LLM ranks for the task + mode; code enforces the template rule -------------------------- #
+    def _rank(self, task: dict, candidates: list[dict], plan: dict) -> list[dict]:
+        try:
+            system = (
+                "You select pretrained models for an AutoML task. For each chosen model recommend a mode: "
+                "'finetune' (ONLY if has_template=true) or 'frozen' (embeddings; any model). Prefer a few "
+                'DECORRELATED families. Reply ONLY JSON: {"selected":[{"ref":..,"family":..,"mode":..,"reason":..}]}'
             )
-        
-        return catalog
+            user = (f"Task: {json.dumps(task)}\nSearch plan: {json.dumps(plan)}\n"
+                    f"Candidates: {json.dumps(candidates, default=str)[:3500]}\n\n"
+                    "Pick the best few (decorrelated families) and a mode for each. Return ONLY JSON.")
+            out = self.call_json(system, user)
+            sel = out.get("selected") if isinstance(out, dict) else None
+            if sel:
+                return [self._enforce_template(s, candidates) for s in sel]
+        except Exception as e:  # noqa: BLE001
+            print(f"[retrieval] rank LLM failed ({e}); deterministic rank")
+        return [{"ref": ref, "family": fam, "mode": "finetune",
+                 "reason": "validated fallback: has fine-tune template, decorrelated family"}
+                for ref, fam in TEMPLATED.items()]
 
-    def _infer_task(self, context: RunContext, task_spec: dict, available_domains: list[str]) -> TaskInference:
-        system_prompt = (
-    "You are an expert in biology, drug discovery, and machine learning, "
-    "helping build an AutoML system. "
-    "Infer the task domain, task modality, and task type from the task title "
-    "and task description. "
-    "Define task_domain by the primary modeling object and model family that "
-    "should be used for prediction, not merely by the biological target "
-    "mentioned in the task. "
-    "Use 'chemistry' when the main predictive object is a compound, ligand, "
-    "small molecule, SMILES string, molecular graph, or molecular descriptor. "
-    "Use 'protein' only when the main predictive object is a protein sequence, "
-    "protein structure, or protein-specific representation. "
-    "Use 'genomics' only when the main predictive object is DNA, RNA, or other "
-    "genomic sequence representations. "
-    "Return JSON only."
-)
+    # --- helpers (deterministic) -------------------------------------------------------------- #
+    @staticmethod
+    def _to_entry(cand) -> dict:
+        d = cand.to_dict()
+        base = d["ref"].split("/")[-1].lower()
+        return {"ref": d["ref"], "family": d.get("family", "unknown"),
+                "has_template": base in TEMPLATED, "downloads": d.get("downloads"),
+                "source": "hf", "tags": d.get("tags", [])[:8]}
 
+    @staticmethod
+    def _mark(m: dict) -> dict:
+        base = str(m.get("ref", "")).split("/")[-1].lower()
+        return {**m, "has_template": m.get("has_template", base in TEMPLATED)}
 
-        user_prompt = f"""
-Task spec:
-{json.dumps(task_spec, indent=2, ensure_ascii=False)}
-
-Available local model-skill domains:
-{json.dumps(available_domains, indent=2, ensure_ascii=False)}
-
-Classification guidance:
-- If the task predicts properties, activities, affinities, or other outcomes for compounds, ligands, or SMILES-based molecules, set task_domain = "chemistry".
-- If the task predicts properties or functions from protein sequences or protein structures, set task_domain = "protein".
-- If the task predicts properties or functions from DNA or RNA sequences, set task_domain = "genomics".
-- Do not assign task_domain based only on the biological target. For example, predicting a compound's activity against a protein receptor is still a chemistry task if the predictive input is a small molecule.
-- task_modality should describe the primary modeling input, such as small_molecule, smiles, molecular_graph, protein_sequence, protein_structure, genomics_sequence, or biomedical_text.
-- task_type should describe the machine learning objective, such as regression, classification, ranking, sequence_labeling, or structure_prediction.
-
-Respond with JSON exactly in this shape:
-{{
-  "task_domain": "<domain>",
-  "task_modality": "<modality>",
-  "task_type": "<task type>",
-  "reason": "<short explanation>"
-}}
-"""
-        
-        payload = self.call_json_logged(context, "retrieval_infer", system_prompt, user_prompt)
-        return TaskInference(**payload)
-    
-    def _select_skills(
-        self,
-        context: RunContext,
-        task_spec: dict,
-        task_inference: TaskInference,
-        candidate_skills: list[dict],    
-    ) -> dict:
-        if task_inference.task_domain == "chemistry":
-            hardcoded_refs = [
-                "DeepChem/ChemBERTa-77M-MTR",
-                "DeepChem/ChemBERTa-100M-MLM",
-                "DeepChem/ChemBERTa-10M-MTR",
-            ]
-            selected_skills = [
-                {
-                    "ref": item["ref"],
-                    "domain": item["domain"],
-                    "path": item["path"],
-                    "reason": (
-                        "Fixed chemistry retrieval candidate for controlled downstream testing."
-                    ),
-                }
-                for item in candidate_skills
-                if item["ref"] in hardcoded_refs
-            ]
-
-            if len(selected_skills) != len(hardcoded_refs):
-                missing = sorted(set(hardcoded_refs) - {item["ref"] for item in selected_skills})
-                raise ValueError(f"Missing hardcoded chemistry skills: {missing}")
-
-            return {
-                "mode": "retrieved",
-                "selected_strategy": "model_skills",
-                "selected_skills": selected_skills,
-                "reason": (
-                    "Using a fixed set of chemistry model skills to isolate the impact of "
-                    "retrieved upstream model candidates on downstream pipeline performance."
-                ),
-            }
-
-        system_prompt = (
-            "You are a RetrievalAgent for a biological ML AutoML system."
-            "Given a task spec, inferred task attributes, and local model-skill candidates, "
-            "select the 3 most relevant model skills. Return JSON only."
-        )
-
-        user_prompt = f"""
-Task spec:
-{json.dumps(task_inference.__dict__, indent=2, ensure_ascii=False)}
-
-Candidate local model skills:
-{json.dumps(candidate_skills, indent=2, ensure_ascii=False)}
-
-Select exactly 3 skills if possible, otherwise select as many relevant skills as available.
-
-Respond with JSON exactly in this shape:
-{{
-  "mode": "retrieved",
-  "selected_strategy": "model_skills",
-  "selected_skills": [
-    {{
-      "ref": "<skill ref>",
-      "domain": "<domain>",
-      "path": "<path>",
-      "reason": "<short reason>"
-    }}
-  ],
-  "reason": "<overall reason>"
-}}
-"""
-        
-        return self.call_json_logged(context, "retrieval_select", system_prompt, user_prompt)
-        
-
-    def _fallback_decision(
-        self,
-        skill_catalog: list[dict],
-        task_inference: dict | None,
-        reason: str,
-        fallback_error: str | None = None,
-    ) -> dict:
-        return {
-            "mode": "fallback",
-            "selected_strategy": "chemistry_baselines",
-            "task_inference": task_inference,
-            "selected_skills": [],
-            "n_total_skills": len(skill_catalog),
-            "available_domains": sorted({item["domain"] for item in skill_catalog}),
-            "reason": reason,
-            "fallback_error": fallback_error,
-        }
-
-    def run(self, context: RunContext) -> AgentResult:
-        task_spec = json.loads((context.run_dir / "task_spec.json").read_text(encoding="utf-8"))
-        llm_log_path = context.run_dir / "llm_logs" / "retrieval_select.json"
-
-        skill_catalog = self._load_skill_catalog()
-        available_domains = sorted({item["domain"] for item in skill_catalog})
-
-        if not skill_catalog:
-            decision = self._fallback_decision(
-                skill_catalog=skill_catalog,
-                task_inference=None,
-                reason="No local model skills manifest found. Falling back to chemistry baselines.",
-            )
-            used_fallback = True
-        else:
-            try:
-                task_inference = self._infer_task(context, task_spec, available_domains)
-                print(task_inference)
-            except Exception as exc:
-                task_inference = self._infer_task_heuristic(task_spec)
-                matched_skills = [
-                    item for item in skill_catalog if item["domain"] == task_inference.task_domain
-                ]
-
-                if not matched_skills:
-                    decision = self._fallback_decision(
-                        skill_catalog=skill_catalog,
-                        task_inference=task_inference.__dict__,
-                        reason=(
-                            "Task inference LLM call failed, and heuristic task inference matched "
-                            "no local model skills. Falling back to chemistry baselines."
-                        ),
-                        fallback_error=str(exc),
-                    )
-                    used_fallback = True
-                else:
-                    try:
-                        decision = self._select_skills(
-                            context=context,
-                            task_spec=task_spec,
-                            task_inference=task_inference,
-                            candidate_skills=matched_skills,
-                        )
-
-                        validated_skills = []
-                        for item in matched_skills:
-                            if item["ref"] in {selected["ref"] for selected in decision.get("selected_skills", [])}:
-                                selected_reason = next(
-                                    (
-                                        selected.get("reason", "")
-                                        for selected in decision.get("selected_skills", [])
-                                        if selected.get("ref") == item["ref"]
-                                    ),
-                                    "",
-                                )
-                                validated_skills.append(
-                                    {
-                                        "ref": item["ref"],
-                                        "domain": item["domain"],
-                                        "path": item["path"],
-                                        "description": item["description"],
-                                        "reason": selected_reason,
-                                    }
-                                )
-
-                        if not validated_skills:
-                            raise ValueError("Heuristic task inference returned no valid selected skills.")
-
-                        decision["task_inference"] = task_inference.__dict__
-                        decision["selected_skills"] = validated_skills
-                        decision["n_total_skills"] = len(skill_catalog)
-                        decision["available_domains"] = available_domains
-                        decision["reason"] = (
-                            f"{decision.get('reason', '')} Heuristic task inference was used after "
-                            f"the LLM call failed: {exc}"
-                        ).strip()
-                        used_fallback = False
-                    except Exception as select_exc:
-                        decision = self._fallback_decision(
-                            skill_catalog=skill_catalog,
-                            task_inference=task_inference.__dict__,
-                            reason=(
-                                "Task inference LLM call failed, and heuristic skill retrieval "
-                                "also failed. Falling back to chemistry baselines."
-                            ),
-                            fallback_error=f"infer_error={exc}; select_error={select_exc}",
-                        )
-                        used_fallback = True
-            else:
-                matched_skills = [
-                    item for item in skill_catalog if item["domain"] == task_inference.task_domain
-                ]
-
-                if not matched_skills:
-                    decision = self._fallback_decision(
-                        skill_catalog=skill_catalog,
-                        task_inference=task_inference.__dict__,
-                        reason=(
-                            "No local model skills matched the inferred task domain. "
-                            "Falling back to chemistry baselines."
-                        ),
-                    )
-                    used_fallback = True
-                else:
-                    try:
-                        decision = self._select_skills(
-                            context=context,
-                            task_spec=task_spec,
-                            task_inference=task_inference,
-                            candidate_skills=matched_skills,
-                        )
-
-                        selected_refs = {
-                            item["ref"] for item in decision.get("selected_skills", [])
-                        }
-
-                        validated_skills = []
-                        for item in matched_skills:
-                            if item["ref"] in selected_refs:
-                                selected_reason = next(
-                                    (
-                                        selected.get("reason", "")
-                                        for selected in decision.get("selected_skills", [])
-                                        if selected.get("ref") == item["ref"]
-                                    ),
-                                    "",
-                                )
-                                validated_skills.append(
-                                    {
-                                        "ref": item["ref"],
-                                        "domain": item["domain"],
-                                        "path": item["path"],
-                                        "description": item["description"],
-                                        "reason": selected_reason,
-                                    }
-                                )
-
-                        if not validated_skills:
-                            raise ValueError("LLM returned no valid selected skills.")
-
-                        decision["task_inference"] = task_inference.__dict__
-                        decision["selected_skills"] = validated_skills
-                        decision["n_total_skills"] = len(skill_catalog)
-                        decision["available_domains"] = available_domains
-                        used_fallback = False
-
-                    except Exception as exc:
-                        decision = self._fallback_decision(
-                            skill_catalog=skill_catalog,
-                            task_inference=task_inference.__dict__,
-                            reason="Skill-based retrieval failed. Falling back to chemistry baselines.",
-                            fallback_error=str(exc),
-                        )
-                        used_fallback = True
-
-        output_path = context.run_dir / "retrieval_result.json"
-        output_path.write_text(
-            json.dumps(decision, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-
-        return AgentResult(
-            agent_name=self.name,
-            status="done",
-            summary="Produced retrieval decision.",
-            outputs={
-                "retrieval_result_path": str(output_path),
-                "decision": decision,
-                "used_fallback": used_fallback,
-                "llm_log_path": str(llm_log_path),
-            },
-        )            
+    @staticmethod
+    def _enforce_template(sel: dict, candidates: list[dict]) -> dict:
+        """Code guard: only models with a verified template may be 'finetune'; else force 'frozen'."""
+        ref = str(sel.get("ref", ""))
+        base = ref.split("/")[-1].lower()
+        has_tpl = base in TEMPLATED or any(c.get("ref") == ref and c.get("has_template") for c in candidates)
+        if sel.get("mode") == "finetune" and not has_tpl:
+            sel["mode"] = "frozen"
+            sel["reason"] = (str(sel.get("reason", "")) + " [forced frozen: no template]").strip()
+        sel.setdefault("mode", "frozen")
+        return sel
