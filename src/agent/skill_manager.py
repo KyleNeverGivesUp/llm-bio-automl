@@ -58,12 +58,13 @@ def _skill_setup(ctx: Ctx, args: dict) -> tuple[str, str]:
 
 
 def _skill_retrieve(ctx: Ctx, args: dict) -> tuple[str, str]:
-    from src.agent.hf_retrieval import discover_models
-    cands = discover_models(top_k=int(args.get("top_k", 12)))
-    (ctx.run_dir / "candidates_live.json").write_text(
-        json.dumps([c.to_dict() for c in cands], indent=2), encoding="utf-8")
-    fams = sorted({c.family for c in cands})
-    return f"discovered {len(cands)} models, families={fams}", "deterministic"  # HF HTTP, no LLM
+    from src.agent.retrieval_agent import RetrievalAgent
+    agent = RetrievalAgent()
+    result = agent.run(ctx.state.get("setup") or {}, top_k=int(args.get("top_k", 12)),
+                       out_path=ctx.run_dir / "retrieval_result.json")
+    ctx.state["candidates"] = result["selected"]          # downstream select/run reads these
+    picks = ", ".join(f"{s.get('ref', '?').split('/')[-1]}:{s.get('mode')}" for s in result["selected"][:5])
+    return f"searched {result['n_discovered']} models (task-guided) -> selected: {picks}", agent.source
 
 
 def _skill_design_menu(ctx: Ctx, args: dict) -> tuple[str, str]:
@@ -140,9 +141,10 @@ SKILLS = {
               "desc": "Read the competition brief + data dir → infer task schema (smiles/target cols), "
                       "metric, train/test files; deterministic validation + leak guard. Runs FIRST."},
     "retrieve": {"executor": _skill_retrieve,
-                 "desc": "Live-search HuggingFace + frontier for foundation models, classified by family "
-                         "(graph/3D/SMILES). LESSON: the strong, decorrelated families are graph (CheMeleon) "
-                         "and 3D (Uni-Mol); SMILES transformers (ChemBERTa) are weak here."},
+                 "desc": "TASK-GUIDED model search: an LLM reads the setup task and plans what to search "
+                         "(families + HF terms), runs a live HF search, and ranks candidates with a mode "
+                         "(frozen=any model / finetune=templated only). LESSON: the strong, decorrelated "
+                         "families are graph (CheMeleon) + 3D (Uni-Mol); SMILES transformers are weak here."},
     "design_menu": {"executor": _skill_design_menu,
                     "desc": "Propose & run frozen featurizer×sklearn plans. LESSON: this is the WEAK baseline "
                             "(caps ~RAE 0.62 / rank 84) — useful only as cheap diverse stack members."},
