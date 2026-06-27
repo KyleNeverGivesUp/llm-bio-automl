@@ -66,14 +66,21 @@ class RetrievalAgent(LLMJsonAgent):
     # ① LLM plans WHAT to search for ----------------------------------------------------------- #
     def _plan(self, task: dict) -> dict:
         system = (
-            "You plan a pretrained-model search for an AutoML pipeline. Given the task, decide what KINDS "
-            "of models suit it and what to search for on HuggingFace. For families, use ONLY values from "
-            "this fixed vocabulary: graph, 3d, smiles, descriptor, multiview (these match the local library "
-            'tags). Reply ONLY JSON: {"queries":[..4-7 HF terms..],"families":[..from the vocabulary..],"rationale":..}'
+            "You plan a pretrained-model search for an AutoML pipeline (searches HuggingFace + GitHub + "
+            "Zenodo). Given the task, decide what KINDS of models suit it AND name specific models to find. "
+            "For families, use ONLY this fixed vocabulary: graph, 3d, smiles, descriptor, multiview. "
+            'Reply ONLY JSON: {"queries":[..],"families":[..from vocabulary..],"rationale":..}'
         )
-        user = (f"Task: {json.dumps(task)}\n\nPropose HF search queries and the representation families "
-                "(from the fixed vocabulary: graph, 3d, smiles, descriptor, multiview) worth trying for THIS "
-                "task. Prefer DECORRELATED families (they stack better). Return ONLY JSON.")
+        user = (
+            f"Task: {json.dumps(task)}\n\n"
+            "Propose search queries + representation families (graph/3d/smiles/descriptor/multiview) for THIS "
+            "task; prefer DECORRELATED families (they stack better). For queries, include the NAMES of specific "
+            "strong pretrained molecular foundation models you know that fit this task — from YOUR knowledge "
+            "(the best ones often live on GitHub/Zenodo, not HuggingFace, so naming them is how we find them). "
+            "CRITICAL: each query must be SHORT — ONE model name or ONE concept, 1-3 words (e.g. 'ChemProp', "
+            "'Uni-Mol', 'GROVER', 'MolE'), NOT a long combined string. Give ~8-12 such short queries. "
+            "Return ONLY JSON."
+        )
         try:
             out = self.call_json(system, user)
             if isinstance(out, dict) and out.get("queries"):

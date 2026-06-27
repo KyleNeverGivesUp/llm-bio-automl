@@ -28,7 +28,11 @@ ZENODO_API = "https://zenodo.org/api/records"
 # The strong molecular foundation models (CheMeleon, Uni-Mol, MolE) are NOT on the HF Hub — they
 # live on GitHub (code) + Zenodo (weights). HF keyword search only surfaces weak/auxiliary models.
 # So we search all three sources; Zenodo is noisy, so we filter to model/software with chem keywords.
-_CHEM_KW = ("mol", "chem", "smiles", "drug", "compound", "graph", "ligand", "admet", "qsar")
+_CHEM_KW = ("mol", "chem", "smiles", "drug", "compound", "graph", "ligand", "admet", "qsar")  # broad (zenodo titles)
+# Stricter set for GitHub: bare "mol"/"graph" let in software noise (moleculer, ansible/molecule,
+# cashapp/molecule). Require a real chemistry signal instead.
+_CHEM_KW_GH = ("molecular", "smiles", "chem", "drug discovery", "ligand", "qsar", "admet",
+               "cheminform", "rdkit", "chembl", "bioactiv", "compound", "molecular property")
 
 # Default sweep — several angles, because HF keyword search is narrow and one query misses most.
 DEFAULT_QUERIES = [
@@ -103,11 +107,19 @@ def _score(downloads: int, likes: int, tags: set[str]) -> float:
 
 
 def _github_search(query: str, limit: int) -> list[Candidate]:
-    """Search GitHub repos — this is where strong models (CheMeleon, Uni-Mol) live as code."""
+    """Search GitHub repos — this is where strong models (CheMeleon, Uni-Mol) live as code.
+
+    Unauthenticated GitHub search is 10 req/min (easily exhausted). Set GITHUB_TOKEN in the env for
+    a 30/min authenticated limit — strongly recommended for repeated runs.
+    """
     import math
+    import os
     url = GITHUB_API + "?" + urllib.parse.urlencode({"q": query, "sort": "stars", "per_page": limit})
-    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
-                                               "User-Agent": "llm-bio-automl"})
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "llm-bio-automl"}
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             items = json.load(r).get("items", [])
@@ -118,8 +130,8 @@ def _github_search(query: str, limit: int) -> list[Candidate]:
     for it in items:
         name = it.get("full_name", "")
         desc = it.get("description") or ""
-        if not any(k in (name + " " + desc).lower() for k in _CHEM_KW):
-            continue  # off-topic repo
+        if not any(k in (name + " " + desc).lower() for k in _CHEM_KW_GH):
+            continue  # off-topic repo (strict filter drops molecule-named non-chem software)
         stars = int(it.get("stargazers_count", 0) or 0)
         out.append(Candidate(model_id=name, downloads=stars, library="github",
                              family=_classify_family(name, [desc]),
