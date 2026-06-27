@@ -68,7 +68,7 @@ def main() -> None:
     except urllib.error.HTTPError as e:
         body = e.read().decode()[:300]
         print(f"\n✗ HTTP {e.code}")
-        print(f"  {body}")
+        print(f"i'm body  {body}")
         hint = {402: "余额不足 → 充值 https://openrouter.ai/settings/credits",
                 429: "限流(免费档)→ 换付费模型,或给 call_json 加退避重试",
                 404: "模型 ID 不存在 → 查目录 https://openrouter.ai/api/v1/models",
