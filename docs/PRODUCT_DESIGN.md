@@ -89,6 +89,49 @@ Plain-language meaning of every term and abbreviation used in this document. (Th
 - **Escape hatch** — an optional fallback path added for the rare cases the normal path can't handle.
 - **Top-k** — the k highest-ranked items kept after sorting (k is a small number we choose).
 
+### Chinese–English quick map (中英术语对照)
+
+Bilingual reference for the core method terms (for the report / discussing with the professor).
+
+**Representation families (表示家族 — how a molecule is encoded):**
+| 中文 | English | note |
+|---|---|---|
+| 家族 | **representation family** / modality | "different representation families" |
+| 图 | **graph** / **GNN** / **message-passing (D-MPNN)** | CheMeleon is a pretrained D-MPNN (a GNN) |
+| 三维 | **3D** / 3D geometry / conformer-based | Uni-Mol is a 3D model |
+| 文本/序列 | **SMILES-based** / sequence-based | ChemBERTa is a SMILES transformer (weak here) |
+| 描述符 | **descriptor** / **fingerprint** | Morgan/ECFP, RDKit descriptors |
+| 多视图 | **multi-view** / multimodal | combines graph+3D+text (e.g. IBM) |
+| 分子表示 | **molecular representation** | how a molecule is encoded |
+| 嵌入 | **embedding** | the numeric vector for a molecule |
+
+**Method (方法):**
+| 中文 | English | note |
+|---|---|---|
+| 预训练 | **pretrained / pretraining** | trained on millions of molecules |
+| 基础模型 | **foundation model** | a large pretrained model |
+| 微调 | **fine-tune / fine-tuning** | backbone weights adapt to the task (the lever) |
+| 冻结 | **frozen (frozen embeddings)** | backbone unchanged; "frozen embeddings + a sklearn head" = extract fixed vectors, train a sklearn model on them |
+| 头 | **head** | the small predictor on top of the backbone |
+| 主干 | **backbone / encoder** | the part that produces the embedding |
+| 集成 | **ensemble / ensembling** | combining several models |
+| 堆叠 | **stacking / stacked ensemble** | a meta-model blends base models |
+| 元模型 | **meta-model / meta-learner** | the blender (we use ridge) |
+| 单模型 | **single / base model** | one model alone |
+
+**Decorrelation & evaluation (去相关与评估):**
+| 中文 | English | note |
+|---|---|---|
+| 去相关 | **decorrelation / decorrelated** | "decorrelated model families" |
+| 相关系数 | **correlation (coefficient)** | corr(CheMeleon, Uni-Mol)=0.866 |
+| 互补 | **complementary** (errors) | their errors complement → stacking helps |
+| 经验最优 | **empirically best / validated** | chosen by measuring, not theory |
+| 判官/验证 | **judge / held-out validation** | our Set-1 judge |
+| 任务特异性 | **task-specific / task specificity** | learned via fine-tuning, not the family |
+| 防泄漏 | **leakage / leak-safe** | never leak the judge into training |
+
+> **The decorrelation thesis in one English sentence:** *"We pick two decorrelated representation families — graph (CheMeleon) and 3D (Uni-Mol) — fine-tune each on the PXR data, and stack them with a ridge meta-learner. Task-specificity is learned during fine-tuning, not determined by the family; the families just need to give good, complementary (decorrelated) molecular representations."*
+
 ---
 
 ## 1. Document Meta
