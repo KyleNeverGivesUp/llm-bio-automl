@@ -28,13 +28,16 @@ def main() -> None:
 
     result = RetrievalAgent().run(setup_report, top_k=12, out_path=out_path)
 
+    sat = result["satisfaction"]
     print(f"\n=== RETRIEVAL (source = {result['source']}) ===")
-    print(f"search plan (LLM): queries={result['search_plan'].get('queries')}")
-    print(f"                   families={result['search_plan'].get('families')}")
-    print(f"discovered {result['n_discovered']} candidates; selected:")
+    print(f"① search plan (LLM): families={result['search_plan'].get('families')}")
+    print(f"                     queries={result['search_plan'].get('queries')}")
+    print(f"③ satisfied? {sat.get('satisfied')} [{sat.get('source')}] — {sat.get('reason','')[:70]}")
+    print(f"④ went online: {result['went_online']}; added to local library: {result['n_added_to_library']}")
+    print(f"⑤ selected ({result['n_candidates']} candidates considered):")
     for s in result["selected"]:
-        print(f"  - {s.get('ref'):<45} family={s.get('family','?'):<8} mode={s.get('mode'):<9} {s.get('reason','')[:60]}")
-    print(f"\nwritten to: {out_path}")
+        print(f"   - {s.get('ref'):<42} family={s.get('family','?'):<8} mode={s.get('mode'):<9} {s.get('reason','')[:55]}")
+    print(f"\nwritten to: {out_path}   |   local library: skills/models/registry.json")
 
 
 if __name__ == "__main__":
