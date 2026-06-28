@@ -189,8 +189,9 @@ def _skill_stack(ctx: Ctx, args: dict) -> tuple[str, str]:
     trial stack is a ridge refit + judge (milliseconds).
     """
     import shutil
+    thr = 99.0 if ctx.fast else 0.95   # fast/smoke: tiny-train RAEs are garbage (>0.95); keep them so the stack plumbing still runs
     members = [(k, Path(v["dir"])) for k, v in ctx.state["plans"].items()
-               if isinstance(v, dict) and v.get("judge_rae") is not None and v["judge_rae"] < 0.95]
+               if isinstance(v, dict) and v.get("judge_rae") is not None and v["judge_rae"] < thr]
     if len(members) < 1:
         return "nothing to stack yet", "deterministic"
     out_root = ctx.run_dir / "stacks"
