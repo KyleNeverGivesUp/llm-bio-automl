@@ -24,6 +24,30 @@ from dataclasses import dataclass, field
 HF_API = "https://huggingface.co/api/models"
 GITHUB_API = "https://api.github.com/search/repositories"
 ZENODO_API = "https://zenodo.org/api/records"
+ARXIV_API = "https://export.arxiv.org/api/query"
+
+
+def arxiv_recent(query: str, n: int = 8) -> list[dict]:
+    """Keyless arXiv search, newest-first → recent papers (title + abstract). Lets the pipeline read
+    CURRENT literature and learn about post-cutoff SOTA models the LLM's static knowledge can't name."""
+    import re
+    params = {"search_query": query, "max_results": n, "sortBy": "submittedDate", "sortOrder": "descending"}
+    url = ARXIV_API + "?" + urllib.parse.urlencode(params)
+    try:
+        with urllib.request.urlopen(url, timeout=25) as r:
+            xml = r.read().decode("utf-8", errors="ignore")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[hf_retrieval] arxiv {query!r} failed: {exc}")
+        return []
+    entries = re.findall(r"<entry>(.*?)</entry>", xml, re.S)
+    out = []
+    for e in entries:
+        t = re.search(r"<title>(.*?)</title>", e, re.S)
+        s = re.search(r"<summary>(.*?)</summary>", e, re.S)
+        if t:
+            out.append({"title": " ".join(t.group(1).split()),
+                        "abstract": " ".join(s.group(1).split())[:600] if s else ""})
+    return out
 
 # The strong molecular foundation models (CheMeleon, Uni-Mol, MolE) are NOT on the HF Hub — they
 # live on GitHub (code) + Zenodo (weights). HF keyword search only surfaces weak/auxiliary models.

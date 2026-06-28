@@ -44,12 +44,13 @@ class RetrievalAgent(LLMJsonAgent):
         local_before = model_registry.search(families)                  # ② local-first hits (pre-online)
         sat = self._judge_satisfaction(task, families, local_before)    # ③ LLM: satisfied?
 
-        went_online, n_added, online_pulled = False, 0, []
+        went_online, n_added, online_pulled, lit_models = False, 0, [], []
         if not sat.get("satisfied"):
-            # task-specific LLM queries + generic sweep, so a narrow query set still yields finds to cache
-            queries = list(dict.fromkeys((plan.get("queries") or []) + list(DEFAULT_QUERIES)))
+            lit_models = self._literature_queries(task)                # ③.5 read recent arXiv → SOTA names
+            # LLM-named (training) + literature-named (post-cutoff) + generic sweep
+            queries = list(dict.fromkeys((plan.get("queries") or []) + lit_models + list(DEFAULT_QUERIES)))
             found = discover_models(queries=queries, top_k=top_k)       # ④ multi-source: HF + GitHub + Zenodo
-            online_pulled = [self._to_entry(c) for c in found]          # (was misnamed 'hf' — it's all 3 sources)
+            online_pulled = [self._to_entry(c) for c in found]
             n_added = model_registry.add(online_pulled)                 #    write-back (grow library)
             went_online = True
 
@@ -63,6 +64,7 @@ class RetrievalAgent(LLMJsonAgent):
             "local_hits_before_online": brief(local_before),           # ②
             "satisfaction": sat,                                        # ③
             "went_online": went_online,
+            "literature_models": lit_models,                           # ③.5 SOTA names read from recent arXiv
             "online_pulled": brief(online_pulled),                     # ④ what this run pulled from outside
             "n_added_to_library": n_added,
             "queries_used": (queries if went_online else []),
@@ -92,12 +94,14 @@ class RetrievalAgent(LLMJsonAgent):
         user = (
             f"Task: {json.dumps(task)}\n\n"
             "Propose search queries + representation families (graph/3d/smiles/descriptor/multiview) for THIS "
-            "task; prefer DECORRELATED families (they stack better). For queries, include the NAMES of specific "
-            "strong pretrained molecular foundation models you know that fit this task — from YOUR knowledge "
-            "(the best ones often live on GitHub/Zenodo, not HuggingFace, so naming them is how we find them). "
-            "CRITICAL: each query must be SHORT — ONE model name or ONE concept, 1-3 words (e.g. 'ChemProp', "
-            "'Uni-Mol', 'GROVER', 'MolE'), NOT a long combined string. Give ~8-12 such short queries. "
-            "Return ONLY JSON."
+            "task; prefer DECORRELATED families (they stack better). For EACH family you list, NAME the 1-2 "
+            "STRONGEST pretrained foundation models you know in that family — from YOUR knowledge — so every "
+            "family (especially graph AND 3D) is covered by a concrete model name. PREFER the NEWEST / "
+            "state-of-the-art foundation models (recent, ~2023+), not only the classic well-known ones — "
+            "recent pretrained foundations usually perform best. The best ones often live on GitHub/Zenodo "
+            "(not HuggingFace), so naming them is how we find them. "
+            "CRITICAL: each query is SHORT — ONE model name, 1-3 words, NOT a long combined string. "
+            "Give ~10-15 such short queries covering all the families. Return ONLY JSON."
         )
         try:
             out = self.call_json(system, user)
@@ -109,6 +113,36 @@ class RetrievalAgent(LLMJsonAgent):
         self.source = "fallback"
         return {"queries": list(DEFAULT_QUERIES), "families": ["graph", "3d", "smiles"],
                 "rationale": "fallback: generic molecular sweep"}
+
+    # ③.5 read RECENT literature (arXiv) → extract SOTA model names beyond the LLM's training cutoff #
+    def _literature_queries(self, task: dict) -> list[str]:
+        from src.agent.hf_retrieval import arxiv_recent
+        # Several angles so different framings surface (e.g. the "descriptor-based foundation" angle
+        # catches CheMeleon, whose paper is titled around classical molecular descriptors).
+        arxiv_qs = ['abs:"molecular property prediction" AND abs:"foundation model"',
+                    'abs:"foundation model" AND abs:"molecular descriptor"',
+                    'abs:molecular AND abs:pretrained AND abs:"message passing"']
+        papers, seen = [], set()
+        for q in arxiv_qs:
+            for p in arxiv_recent(q, n=6):
+                if p["title"] not in seen:
+                    seen.add(p["title"]); papers.append(p)
+        if not papers:
+            return []
+        try:
+            system = ("You read RECENT paper titles+abstracts and EXTRACT the NAMES of pretrained molecular "
+                      "models / foundation models mentioned (e.g. 'Uni-Mol', 'SpecMol'). These may be NEWER "
+                      "than your training knowledge — extract them straight from the text. "
+                      'Reply ONLY JSON: {"model_names":[..short model names..]}')
+            user = ("Recent papers:\n"
+                    + "\n".join(f"- {p['title']}: {p['abstract']}" for p in papers)   # full abstract: model name may be mid-text
+                    + "\n\nExtract the pretrained molecular model names mentioned. Return ONLY JSON.")
+            out = self.call_json(system, user)
+            names = out.get("model_names") if isinstance(out, dict) else None
+            return [str(n) for n in (names or []) if isinstance(n, str) and 2 <= len(str(n)) <= 30][:10]
+        except Exception as e:  # noqa: BLE001
+            print(f"[retrieval] literature extraction failed ({e})")
+            return []
 
     # ③ LLM judges whether the local library is enough ----------------------------------------- #
     def _judge_satisfaction(self, task: dict, families: list[str], local_hits: list[dict]) -> dict:
