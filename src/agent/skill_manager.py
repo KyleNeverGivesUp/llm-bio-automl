@@ -135,13 +135,17 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
     repo = ctx.data_dir.parent.parent
     cands = ctx.state.get("candidates") or _RUN_FALLBACK
     ran, skipped = 0, []
-    for c in cands:
+    for idx, c in enumerate(cands, 1):
         ref = str(c.get("ref", "")); base = ref.split("/")[-1].lower()
         family, mode = c.get("family", ""), c.get("mode", "frozen")
         bb = _ft_backbone(base) if mode == "finetune" else None    # messy discovered name -> template backbone
         pid = f"finetune_{bb}" if bb else f"{mode}_{base}"          # dedup finetune by backbone
         if pid in ctx.state["plans"]:
+            print(f"[run] ({idx}/{len(cands)}) {pid} already done — skip")
             continue
+        what = f"finetune:{bb}(e{_FT_EPOCHS.get(bb, 50)})" if bb else f"frozen:{base}"
+        gpu = " [GPU training]" if bb and not ctx.collect_only else (" [collect-only reuse]" if bb else " [CPU featurize]")
+        print(f"[run] ({idx}/{len(cands)}) START {what}{gpu} ...", flush=True)
         try:
             if bb:
                 p = FineTunePlan(backbone=bb, epochs=_FT_EPOCHS.get(bb, 50), label=f"ft_{bb}")
@@ -154,6 +158,7 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
             else:                                       # frozen: embedding featurizer + sklearn head
                 feat, params = _frozen_featurizer(base, family, ref)
                 if feat is None:
+                    print(f"[run] ({idx}/{len(cands)}) SKIP {base}({mode}) — no template/featurizer")
                     skipped.append(f"{base}({mode}): no template/featurizer")
                     continue
                 p = MenuPlan(plan_id=pid, name=pid, featurizer=feat, model="ridge", params=params)
@@ -164,7 +169,9 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
             ctx.state["plans"][pid] = {"dir": str(pdir), "judge_rae": jr,
                                        "featurizer": f"{mode}:{base}", "model": mode, "params": {}}
             ran += 1
+            print(f"[run] ({idx}/{len(cands)}) DONE  {what} — judge RAE {jr:.4f}", flush=True)
         except Exception as e:  # noqa: BLE001
+            print(f"[run] ({idx}/{len(cands)}) FAIL  {what} — {type(e).__name__}: {str(e)[:90]}", flush=True)
             skipped.append(f"{base}: {type(e).__name__}")
     verb = "ran (collect-only)" if ctx.collect_only else "ran"
     return f"{verb} {ran} candidate(s)" + (f"; skipped {skipped}" if skipped else ""), "deterministic"
