@@ -44,7 +44,8 @@ def _train_fold(train_csv: Path, out_dir: Path, epochs: int, accel: str,
         ["chemprop", "train", "-i", str(train_csv), "-s", SMILES,
          "--target-columns", *TARGETS, "-t", "regression", "--from-foundation", "CheMeleon",
          "--loss-function", "mae",   # the 0.538 solution used MAE loss (~0.01 over MSE on noisy labels)
-         "--epochs", str(epochs), "--split-sizes", "0.9", "0.1", "0.0",
+         "--epochs", str(epochs), "--warmup-epochs", str(max(1, min(2, epochs - 1))),  # warmup must be < epochs
+         "--split-sizes", "0.9", "0.1", "0.0",
          "--batch-size", str(batch_size),
          "-o", str(out_dir), "--accelerator", accel, "-n", str(num_workers)],
         check=True,

@@ -140,16 +140,16 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
         ref = str(c.get("ref", "")); base = ref.split("/")[-1].lower()
         family, mode = c.get("family", ""), c.get("mode", "frozen")
         bb = _ft_backbone(base) if mode == "finetune" else None    # messy discovered name -> template backbone
+        ep = (3 if ctx.fast else _FT_EPOCHS.get(bb, 50)) if bb else 0   # fast: 3 (must be > chemprop warmup 2)
         pid = f"finetune_{bb}" if bb else f"{mode}_{base}"          # dedup finetune by backbone
         if pid in ctx.state["plans"]:
             print(f"[run] ({idx}/{len(cands)}) {pid} already done — skip")
             continue
-        what = f"finetune:{bb}(e{_FT_EPOCHS.get(bb, 50)})" if bb else f"frozen:{base}"
+        what = f"finetune:{bb}(e{ep})" if bb else f"frozen:{base}"
         gpu = " [GPU training]" if bb and not ctx.collect_only else (" [collect-only reuse]" if bb else " [CPU featurize]")
         print(f"[run] ({idx}/{len(cands)}) START {what}{gpu} ...", flush=True)
         try:
             if bb:
-                ep = 2 if ctx.fast else _FT_EPOCHS.get(bb, 50)
                 p = FineTunePlan(backbone=bb, epochs=ep, label=f"ft_{bb}", fast=ctx.fast)
                 out_dir = (repo / "predictions") if ctx.collect_only else (Path("/tmp") / p.plan_id)
                 if not ctx.collect_only:
