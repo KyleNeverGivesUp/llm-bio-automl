@@ -170,6 +170,7 @@ def discover_models(
     top_k: int = 20,
     min_score: float = 0.0,
     sources: tuple[str, ...] = ("hf", "github", "zenodo"),
+    per_family: int = 4,
 ) -> list[Candidate]:
     """Multi-source live search (HF + GitHub + Zenodo); deduped, family-tagged, ranked candidates.
 
@@ -207,8 +208,29 @@ def discover_models(
             for c in extra:
                 if c.model_id not in by_id:
                     by_id[c.model_id] = c
-    ranked = sorted(by_id.values(), key=lambda c: -c.score)
-    return [c for c in ranked if c.score >= min_score][:top_k]
+    ranked = [c for c in sorted(by_id.values(), key=lambda c: -c.score) if c.score >= min_score]
+    if not per_family:
+        return ranked[:top_k]
+    # Per-family ROUND-ROBIN: rank-0 of every family, then rank-1 of every family, ... up to
+    # `per_family` rounds. This guarantees a strong-but-globally-low family (e.g. 3D / Uni-Mol,
+    # only on Zenodo with a low fixed score) gets a top_k slot instead of being crowded out by a
+    # popular family (e.g. many CheMeleon variants). Remaining slots fill by global rank.
+    import collections
+    by_fam: dict[str, list] = collections.defaultdict(list)
+    for c in ranked:
+        by_fam[c.family].append(c)                       # each family, in global-rank order
+    result, chosen = [], set()
+    for r in range(per_family):                          # round r = the r-th best of each family
+        for fam in by_fam:
+            if r < len(by_fam[fam]):
+                c = by_fam[fam][r]
+                result.append(c); chosen.add(id(c))
+    for c in ranked:                                     # fill leftover slots by global rank
+        if len(result) >= top_k:
+            break
+        if id(c) not in chosen:
+            result.append(c)
+    return result[:top_k]
 
 
 if __name__ == "__main__":
