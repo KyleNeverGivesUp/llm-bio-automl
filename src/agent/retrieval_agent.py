@@ -48,8 +48,9 @@ class RetrievalAgent(LLMJsonAgent):
         if not sat.get("satisfied"):
             # task-specific LLM queries + generic sweep, so a narrow query set still yields finds to cache
             queries = list(dict.fromkeys((plan.get("queries") or []) + list(DEFAULT_QUERIES)))
-            hf = discover_models(queries=queries, top_k=top_k)          # ④ multi-source online search
-            online_pulled = [self._to_entry(c) for c in hf]
+            found = discover_models(queries=queries, top_k=top_k)       # ④ multi-source: HF + GitHub + Zenodo
+            print(f"@@@@@@@@@@@: {found}")
+            online_pulled = [self._to_entry(c) for c in found]          # (was misnamed 'hf' — it's all 3 sources)
             n_added = model_registry.add(online_pulled)                 #    write-back (grow library)
             went_online = True
 
