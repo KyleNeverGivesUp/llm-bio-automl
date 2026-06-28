@@ -158,47 +158,53 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
 
 
 def _skill_stack(ctx: Ctx, args: dict) -> tuple[str, str]:
-    """Ridge-stack the pool, with judge-aware backward elimination (drop members that hurt the judge).
+    """Ridge-stack the pool via judge-aware FORWARD SELECTION: start from the best single member and
+    greedily ADD only members that lower the Set-1 judge RAE, until none helps.
 
-    The LLM's selection can over-include weak members (e.g. a frozen SMILES model). Backward
-    elimination greedily drops the member whose removal most lowers the Set-1 judge RAE, until no
-    drop helps — so the autonomous ensemble self-prunes to the truly-helpful subset. Members are
-    already run (predictions cached), so each re-stack is just a ridge refit + judge (milliseconds).
+    Forward selection avoids backward elimination's local-optimum trap — where two weak members
+    "protect" each other (removing either alone doesn't help, so a greedy backward pass keeps both).
+    Here a weak member simply never gets added. Members are already run (predictions cached), so each
+    trial stack is a ridge refit + judge (milliseconds).
     """
+    import shutil
     members = [(k, Path(v["dir"])) for k, v in ctx.state["plans"].items()
                if isinstance(v, dict) and v.get("judge_rae") is not None and v["judge_rae"] < 0.95]
     if len(members) < 1:
         return "nothing to stack yet", "deterministic"
     out_root = ctx.run_dir / "stacks"
 
-    def stack_rae(subset: list, tag: str) -> float:
+    def subset_rae(subset: list, tag: str) -> float:
+        if len(subset) == 1:                                     # single member = its own judge RAE
+            return judge_csv(subset[0][1] / "test_predictions.csv")["rae"]
         d = out_root / f"ens_{tag}"
         aggregate([p for _, p in subset], d)
         return judge_csv(d / "ensemble" / "test_predictions.csv")["rae"]
 
-    cur = list(members)
-    best_rae = stack_rae(cur, "all")
-    full_rae, full_n = best_rae, len(cur)
-    dropped: list[str] = []
-    improved = True
-    while improved and len(cur) > 1:                 # keep >=1; in practice stops at the decorrelated core
-        improved = False
-        drop_i, drop_rae = None, best_rae
-        for i in range(len(cur)):
-            r = stack_rae(cur[:i] + cur[i + 1:], f"d{len(dropped)}_{i}")
-            if r < drop_rae - 1e-6:                  # removing member i improves the judge
-                drop_rae, drop_i = r, i
-        if drop_i is not None:
-            dropped.append(cur.pop(drop_i)[0]); best_rae = drop_rae; improved = True
+    remaining, chosen, best_rae = list(members), [], float("inf")
+    while remaining:
+        cand = None                                             # (idx, rae) of the best addition
+        for i, m in enumerate(remaining):
+            r = subset_rae(chosen + [m], f"f{len(chosen)}_{i}")
+            if cand is None or r < cand[1]:
+                cand = (i, r)
+        if cand[1] < best_rae - 1e-6:                           # adding it improves the judge -> take it
+            best_rae = cand[1]
+            chosen.append(remaining.pop(cand[0]))
+        else:
+            break                                               # nothing left improves -> stop
 
-    aggregate([p for _, p in cur], ctx.run_dir / "ensemble")   # final ensemble = surviving subset
-    rae = judge_csv(ctx.run_dir / "ensemble" / "ensemble" / "test_predictions.csv")["rae"]
+    ens = ctx.run_dir / "ensemble"
+    if len(chosen) == 1:                                         # single member: it IS the ensemble
+        (ens / "ensemble").mkdir(parents=True, exist_ok=True)
+        shutil.copy(chosen[0][1] / "test_predictions.csv", ens / "ensemble" / "test_predictions.csv")
+    else:
+        aggregate([p for _, p in chosen], ens)
+    rae = judge_csv(ens / "ensemble" / "test_predictions.csv")["rae"]
     prev = ctx.state["best"]["judge_rae"] if ctx.state["best"] else None
     if prev is None or rae < prev:
-        ctx.state["best"] = {"judge_rae": rae, "n_members": len(cur), "members": [k for k, _ in cur]}
-    msg = (f"stacked {full_n}->{len(cur)} members -> judge RAE {rae:.4f}"
-           + (f" (pruned {dropped}; full was {full_rae:.4f})" if dropped else ""))
-    return msg, "deterministic"
+        ctx.state["best"] = {"judge_rae": rae, "n_members": len(chosen), "members": [k for k, _ in chosen]}
+    return (f"forward-selected {len(chosen)}/{len(members)} members -> judge RAE {rae:.4f} "
+            f"(kept {[k for k, _ in chosen]})"), "deterministic"
 
 
 SKILLS = {
