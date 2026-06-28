@@ -44,13 +44,14 @@ class RetrievalAgent(LLMJsonAgent):
         local_before = model_registry.search(families)                  # ② local-first hits (pre-online)
         sat = self._judge_satisfaction(task, families, local_before)    # ③ LLM: satisfied?
 
-        went_online, n_added, online_pulled, lit_models = False, 0, [], []
+        went_online, n_added, online_pulled, lit_models, online_raw = False, 0, [], [], []
         if not sat.get("satisfied"):
             lit_models = self._literature_queries(task)                # ③.5 read recent arXiv → SOTA names
             # LLM-named (training) + literature-named (post-cutoff) + generic sweep
             queries = list(dict.fromkeys((plan.get("queries") or []) + lit_models + list(DEFAULT_QUERIES)))
-            found = discover_models(queries=queries, top_k=top_k)       # ④ multi-source: HF + GitHub + Zenodo
-            online_pulled = [self._to_entry(c) for c in found]
+            found, raw = discover_models(queries=queries, top_k=top_k, with_raw=True)  # ④ multi-source
+            online_raw = [c.to_dict() for c in raw]                     # FULL scored recall (pre per-family) + score breakdown
+            online_pulled = [self._to_entry(c) for c in found]          # per-family top-N (written back)
             n_added = model_registry.add(online_pulled)                 #    write-back (grow library)
             went_online = True
 
@@ -65,7 +66,8 @@ class RetrievalAgent(LLMJsonAgent):
             "satisfaction": sat,                                        # ③
             "went_online": went_online,
             "literature_models": lit_models,                           # ③.5 SOTA names read from recent arXiv
-            "online_pulled": brief(online_pulled),                     # ④ what this run pulled from outside
+            "online_raw": online_raw,                                  # ④a FULL scored recall (pre per-family) + score breakdown
+            "online_pulled": brief(online_pulled),                     # ④b per-family top-N (written to library)
             "n_added_to_library": n_added,
             "queries_used": (queries if went_online else []),
             "candidates": brief(candidates),                           # ⑤ full pool the LLM ranked from
