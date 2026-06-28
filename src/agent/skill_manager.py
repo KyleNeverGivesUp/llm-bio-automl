@@ -200,7 +200,14 @@ def _skill_stack(ctx: Ctx, args: dict) -> tuple[str, str]:
         if len(subset) == 1:                                     # single member = its own judge RAE
             return judge_csv(subset[0][1] / "test_predictions.csv")["rae"]
         d = out_root / f"ens_{tag}"
-        aggregate([p for _, p in subset], d)
+        try:
+            aggregate([p for _, p in subset], d)
+        except Exception as e:  # noqa: BLE001
+            if ctx.fast:                                         # smoke OOF is single-fold -> ridge CV has no train split
+                print(f"[stack] fast: multi-member ridge skipped ({type(e).__name__}) — smoke OOF is 1-fold; "
+                      f"the real ridge stack runs only in a full (non-fast) run")
+                return float("inf")                              # don't pick this combo in smoke
+            raise
         return judge_csv(d / "ensemble" / "test_predictions.csv")["rae"]
 
     remaining, chosen, best_rae = list(members), [], float("inf")
