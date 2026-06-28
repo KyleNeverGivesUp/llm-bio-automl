@@ -202,12 +202,28 @@ def discover_models(
                     family=_classify_family(mid, tags),
                     score=_score(int(m.get("downloads", 0) or 0), int(m.get("likes", 0) or 0), tset),
                 )
-        if qi < 3:  # GitHub/Zenodo only for the top few queries (API budget)
-            extra = (_github_search(q, 5) if "github" in sources else []) + \
-                    (_zenodo_search(q, 5) if "zenodo" in sources else [])
-            for c in extra:
-                if c.model_id not in by_id:
-                    by_id[c.model_id] = c
+        # Zenodo has NO rate limit and is where strong weights live (Uni-Mol, CheMeleon), so search it
+        # for EVERY query — otherwise a model-name query that isn't in the first few (e.g. "Uni-Mol")
+        # never gets looked up there. GitHub IS rate-limited (10/min unauth) → only the first few queries.
+        extra = []
+        if "zenodo" in sources:
+            extra += _zenodo_search(q, 5)
+        if "github" in sources and qi < 5:
+            extra += _github_search(q, 5)
+        for c in extra:
+            if c.model_id not in by_id:
+                by_id[c.model_id] = c
+    # Boost LLM-NAMED matches: the planner deliberately named these models (e.g. "Uni-Mol"), so a
+    # candidate whose id contains a query name should rank UP, not be buried by popularity or Zenodo's
+    # low fixed score. This is how an LLM-named backbone reliably surfaces instead of being cut by top_k.
+    def _norm(s: str) -> str:
+        return "".join(ch for ch in s.lower() if ch.isalnum())
+    qnorms = [n for n in (_norm(q) for q in queries) if len(n) >= 4]   # skip tiny/ambiguous terms
+    for c in by_id.values():
+        cid = _norm(c.model_id)
+        if any(qn in cid for qn in qnorms):
+            c.score += 6.0                                             # named by the LLM -> honor it
+
     ranked = [c for c in sorted(by_id.values(), key=lambda c: -c.score) if c.score >= min_score]
     if not per_family:
         return ranked[:top_k]
