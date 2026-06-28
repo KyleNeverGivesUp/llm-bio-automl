@@ -31,29 +31,46 @@ class RetrievalAgent(LLMJsonAgent):
     source: str = "unknown"
 
     def run(self, setup_report: dict, top_k: int = 12, out_path: str | Path | None = None) -> dict:
+        # Every intermediate step is landed in the result (→ retrieval_result.json) so the whole
+        # discover→filter→select process is inspectable/debuggable, not just the final picks.
+        def brief(ms):  # compact view of a model list for the artifact
+            return [{"ref": m.get("ref"), "family": m.get("family"),
+                     "source": m.get("source"), "has_template": m.get("has_template")} for m in ms]
+
         task = self._task_brief(setup_report)
-        plan = self._plan(task) 
-        print(f"######plan: {plan}")                                      # ① LLM: families + queries
+        plan = self._plan(task)                                          # ① LLM: queries + families
         families = plan.get("families") or []
 
-        local_hits = model_registry.search(families)                 # ② local-first
-        sat = self._judge_satisfaction(task, families, local_hits)   # ③ LLM: satisfied?
+        local_before = model_registry.search(families)                  # ② local-first hits (pre-online)
+        sat = self._judge_satisfaction(task, families, local_before)    # ③ LLM: satisfied?
 
-        went_online, n_added = False, 0
+        went_online, n_added, online_pulled = False, 0, []
         if not sat.get("satisfied"):
             # task-specific LLM queries + generic sweep, so a narrow query set still yields finds to cache
             queries = list(dict.fromkeys((plan.get("queries") or []) + list(DEFAULT_QUERIES)))
-            hf = discover_models(queries=queries, top_k=top_k)
-            n_added = model_registry.add([self._to_entry(c) for c in hf])   # ④ write-back (grow library)
+            hf = discover_models(queries=queries, top_k=top_k)          # ④ multi-source online search
+            online_pulled = [self._to_entry(c) for c in hf]
+            n_added = model_registry.add(online_pulled)                 #    write-back (grow library)
             went_online = True
-            local_hits = model_registry.search(families) or model_registry.load()
 
-        candidates = [self._mark(m) for m in local_hits]
-        ranked = self._rank(task, candidates, plan)                  # ⑤ LLM: select + mode
+        local_hits = model_registry.search(families) or model_registry.load()
+        candidates = [self._mark(m) for m in local_hits]                # ⑤ full candidate pool (pre-select)
+        ranked = self._rank(task, candidates, plan)                     # ⑥ LLM: select + mode
 
-        result = {"task": task, "search_plan": plan, "satisfaction": sat,
-                  "went_online": went_online, "n_added_to_library": n_added,
-                  "n_candidates": len(candidates), "selected": ranked, "source": self.source}
+        result = {
+            "task": task,
+            "search_plan": plan,                                        # ①
+            "local_hits_before_online": brief(local_before),           # ②
+            "satisfaction": sat,                                        # ③
+            "went_online": went_online,
+            "online_pulled": brief(online_pulled),                     # ④ what this run pulled from outside
+            "n_added_to_library": n_added,
+            "queries_used": (queries if went_online else []),
+            "candidates": brief(candidates),                           # ⑤ full pool the LLM ranked from
+            "n_candidates": len(candidates),
+            "selected": ranked,                                        # ⑥ final picks
+            "source": self.source,
+        }
         if out_path:
             Path(out_path).write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result
