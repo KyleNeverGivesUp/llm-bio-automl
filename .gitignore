@@ -19,3 +19,4 @@ outputs/
 
 # Scratch / temp artifacts
 tmp_*skills/models/registry.json
+featurizer_cache/
