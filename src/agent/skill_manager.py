@@ -99,6 +99,18 @@ _RUN_FALLBACK = [{"ref": "chemeleon", "family": "graph", "mode": "finetune"},
                  {"ref": "unimol", "family": "3d", "mode": "finetune"}]
 
 
+def _ft_backbone(base: str) -> str | None:
+    """Map a (possibly messy) discovered model name to a fine-tune TEMPLATE backbone by substring,
+    so e.g. 'uni-mol fine-tuned checkpoints' or 'permeability-...-chemeleon-baseline' still route to
+    the verified chemeleon/unimol template instead of being skipped."""
+    b = base.replace("-", "").replace("_", "").replace(" ", "")
+    if "chemeleon" in b:
+        return "chemeleon"
+    if "unimol" in b:
+        return "unimol"
+    return None
+
+
 def _frozen_featurizer(base: str, family: str, ref: str) -> tuple[str | None, dict]:
     """Map a candidate to a frozen-embedding featurizer (None = can't run frozen here)."""
     if base == "chemeleon":
@@ -118,7 +130,7 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
     """
     import subprocess
     from src.cv_runner import run_plan_cv
-    from src.finetune_runner import TEMPLATES as FT_TEMPLATES, FineTunePlan, build_command, collect_results
+    from src.finetune_runner import FineTunePlan, build_command, collect_results
     from src.schemas import MenuPlan
     repo = ctx.data_dir.parent.parent
     cands = ctx.state.get("candidates") or _RUN_FALLBACK
@@ -126,12 +138,13 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
     for c in cands:
         ref = str(c.get("ref", "")); base = ref.split("/")[-1].lower()
         family, mode = c.get("family", ""), c.get("mode", "frozen")
-        pid = f"{mode}_{base}"
+        bb = _ft_backbone(base) if mode == "finetune" else None    # messy discovered name -> template backbone
+        pid = f"finetune_{bb}" if bb else f"{mode}_{base}"          # dedup finetune by backbone
         if pid in ctx.state["plans"]:
             continue
         try:
-            if mode == "finetune" and base in FT_TEMPLATES:
-                p = FineTunePlan(backbone=base, epochs=_FT_EPOCHS.get(base, 50), label=f"ft_{base}")
+            if bb:
+                p = FineTunePlan(backbone=bb, epochs=_FT_EPOCHS.get(bb, 50), label=f"ft_{bb}")
                 out_dir = (repo / "predictions") if ctx.collect_only else (Path("/tmp") / p.plan_id)
                 if not ctx.collect_only:
                     out_dir.mkdir(parents=True, exist_ok=True)
