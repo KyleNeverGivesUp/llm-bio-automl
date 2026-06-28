@@ -32,7 +32,8 @@ class RetrievalAgent(LLMJsonAgent):
 
     def run(self, setup_report: dict, top_k: int = 12, out_path: str | Path | None = None) -> dict:
         task = self._task_brief(setup_report)
-        plan = self._plan(task)                                       # ① LLM: families + queries
+        plan = self._plan(task) 
+        print(f"######plan: {plan}")                                      # ① LLM: families + queries
         families = plan.get("families") or []
 
         local_hits = model_registry.search(families)                 # ② local-first
@@ -138,9 +139,11 @@ class RetrievalAgent(LLMJsonAgent):
     def _to_entry(cand) -> dict:
         d = cand.to_dict()
         base = d["ref"].split("/")[-1].lower()
+        lib = d.get("library", "")
+        source = lib if lib in ("github", "zenodo") else "hf"   # real origin, not hardcoded
         return {"ref": d["ref"], "family": d.get("family", "unknown"),
                 "has_template": base in TEMPLATED, "downloads": d.get("downloads"),
-                "source": "hf", "tags": d.get("tags", [])[:8]}
+                "source": source, "tags": d.get("tags", [])[:8]}
 
     @staticmethod
     def _mark(m: dict) -> dict:
