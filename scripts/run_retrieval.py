@@ -27,6 +27,7 @@ def main() -> None:
     out_path = out_dir / "retrieval_result.json"
 
     result = RetrievalAgent().run(setup_report, top_k=12, out_path=out_path)
+    print(f"!!!!! {result}")
 
     sat = result["satisfaction"]
     print(f"\n=== RETRIEVAL (source = {result['source']}) ===")
