@@ -36,6 +36,7 @@ class FineTunePlan:
     epochs: int = 50
     tta: int = 0                       # unimol only: randomized-SMILES test-time aug
     label: str | None = None
+    fast: bool = False                 # smoke test: 1 fold, tiny epochs, ~60 rows — verify auto-FT plumbing only
     extra: dict = field(default_factory=dict)
 
     @property
@@ -50,14 +51,16 @@ TEMPLATES: dict[str, dict] = {
         "script": "scripts/finetune_cheme_mt5.py",
         "oof": "oof_cheme_mt5.csv", "test": "test_cheme_mt5.csv",
         "args": lambda p, data, out: ["--epochs", str(p.epochs), "--accelerator", "gpu",
-                                       "--data-dir", str(data), "--out-dir", str(out)],
+                                       "--data-dir", str(data), "--out-dir", str(out)]
+                                      + (["--folds", "1", "--max-rows", "60"] if p.fast else []),  # smoke
         "needs": ["train_multitask5.csv", "sc_extra.csv", "test.csv", "folds_calibrated.json"],
     },
     "unimol": {
         "script": "scripts/finetune_unimol.py",
         "oof": "oof_unimol.csv", "test": "test_unimol.csv",
         "args": lambda p, data, out: ["--epochs", str(p.epochs), "--tta", str(p.tta),
-                                      "--accelerator", "gpu", "--data-dir", str(data), "--out-dir", str(out)],
+                                      "--accelerator", "gpu", "--data-dir", str(data), "--out-dir", str(out)]
+                                     + (["--smoke"] if p.fast else []),  # 1 fold, 2 epochs, 60 rows
         "needs": ["train.csv", "test.csv", "folds_calibrated.json"],
     },
 }

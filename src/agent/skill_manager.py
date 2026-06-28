@@ -40,6 +40,7 @@ class Ctx:
     folds: object
     brief_path: Path | None = None             # competition description the Setup agent reads
     collect_only: bool = False                 # fine-tune: reuse predictions/ instead of GPU (Mac testing)
+    fast: bool = False                         # smoke: real but tiny fine-tune (1 fold/2 epochs/60 rows) to test plumbing
     state: dict = field(default_factory=lambda: {"plans": {}, "best": None, "log": [], "setup": None})
 
 
@@ -148,7 +149,8 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
         print(f"[run] ({idx}/{len(cands)}) START {what}{gpu} ...", flush=True)
         try:
             if bb:
-                p = FineTunePlan(backbone=bb, epochs=_FT_EPOCHS.get(bb, 50), label=f"ft_{bb}")
+                ep = 2 if ctx.fast else _FT_EPOCHS.get(bb, 50)
+                p = FineTunePlan(backbone=bb, epochs=ep, label=f"ft_{bb}", fast=ctx.fast)
                 out_dir = (repo / "predictions") if ctx.collect_only else (Path("/tmp") / p.plan_id)
                 if not ctx.collect_only:
                     out_dir.mkdir(parents=True, exist_ok=True)
