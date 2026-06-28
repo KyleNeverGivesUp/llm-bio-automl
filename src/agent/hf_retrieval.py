@@ -251,26 +251,19 @@ def discover_models(
     ranked = [c for c in sorted(by_id.values(), key=lambda c: -c.score) if c.score >= min_score]
     if not per_family:
         return ranked[:top_k]
-    # Per-family ROUND-ROBIN: rank-0 of every family, then rank-1 of every family, ... up to
-    # `per_family` rounds. This guarantees a strong-but-globally-low family (e.g. 3D / Uni-Mol,
-    # only on Zenodo with a low fixed score) gets a top_k slot instead of being crowded out by a
-    # popular family (e.g. many CheMeleon variants). Remaining slots fill by global rank.
+    # Per-family TOP-N: take the top `per_family` of EACH family independently (NOT a global top_k
+    # cut). This GUARANTEES every represented family contributes its best `per_family` — a strong but
+    # globally low-ranked family (e.g. 3D / Uni-Mol, only on Zenodo with a low fixed score) can never
+    # be squeezed to zero by a popular family (e.g. many CheMeleon variants). No global top_k squeeze.
     import collections
     by_fam: dict[str, list] = collections.defaultdict(list)
     for c in ranked:
-        by_fam[c.family].append(c)                       # each family, in global-rank order
-    result, chosen = [], set()
-    for r in range(per_family):                          # round r = the r-th best of each family
-        for fam in by_fam:
-            if r < len(by_fam[fam]):
-                c = by_fam[fam][r]
-                result.append(c); chosen.add(id(c))
-    for c in ranked:                                     # fill leftover slots by global rank
-        if len(result) >= top_k:
-            break
-        if id(c) not in chosen:
-            result.append(c)
-    return result[:top_k]
+        by_fam[c.family].append(c)                       # each family's list is already score-sorted
+    result = []
+    for cands in by_fam.values():
+        result.extend(cands[:per_family])                # top `per_family` of THIS family
+    result.sort(key=lambda c: -c.score)                  # present best-first
+    return result
 
 
 if __name__ == "__main__":
