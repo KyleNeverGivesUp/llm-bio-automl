@@ -96,11 +96,13 @@ class Candidate:
     library: str = ""
     family: str = "unknown"
     score: float = 0.0
+    score_detail: dict = field(default_factory=dict)   # how the score was computed (for debug landing)
 
     def to_dict(self) -> dict:
         return {
             "ref": self.model_id, "downloads": self.downloads, "likes": self.likes,
             "library": self.library, "family": self.family, "score": round(self.score, 3),
+            "score_detail": {k: round(v, 3) for k, v in self.score_detail.items()},
             "tags": [t for t in self.tags if "license" not in t][:12],
         }
 
@@ -124,12 +126,14 @@ def _classify_family(model_id: str, tags: list[str]) -> str:
     return "unknown"
 
 
-def _score(downloads: int, likes: int, tags: set[str]) -> float:
+def _score(downloads: int, likes: int, tags: set[str]) -> tuple[float, dict]:
+    """Return (score, breakdown) so the computation can be landed for debugging."""
     import math
     good = len(tags & _GOOD_TAGS)
     bad = len(tags & _BAD_TAGS)
-    pop = math.log10(downloads + 10)  # popularity, log-scaled
-    return 2.0 * good - 3.0 * bad + pop + 0.2 * math.log10(likes + 1)
+    detail = {"good_tags": 2.0 * good, "bad_tags": -3.0 * bad,
+              "popularity": math.log10(downloads + 10), "likes": 0.2 * math.log10(likes + 1)}
+    return sum(detail.values()), detail
 
 
 def _github_search(query: str, limit: int) -> list[Candidate]:
@@ -161,7 +165,8 @@ def _github_search(query: str, limit: int) -> list[Candidate]:
         stars = int(it.get("stargazers_count", 0) or 0)
         out.append(Candidate(model_id=name, downloads=stars, library="github",
                              family=_classify_family(name, [desc]),
-                             score=2.0 + math.log10(stars + 10)))  # github bonus + star popularity
+                             score=2.0 + math.log10(stars + 10),
+                             score_detail={"github_base": 2.0, "stars_pop": math.log10(stars + 10)}))
     return out
 
 
@@ -184,7 +189,8 @@ def _zenodo_search(query: str, limit: int) -> list[Candidate]:
         if not any(k in title.lower() for k in _CHEM_KW):
             continue
         out.append(Candidate(model_id=title[:70], downloads=0, library="zenodo", tags=[rtype],
-                             family=_classify_family(title, []), score=1.8))
+                             family=_classify_family(title, []), score=1.8,
+                             score_detail={"zenodo_base": 1.8}))
     return out
 
 
@@ -195,7 +201,8 @@ def discover_models(
     min_score: float = 0.0,
     sources: tuple[str, ...] = ("hf", "github", "zenodo"),
     per_family: int = 4,
-) -> list[Candidate]:
+    with_raw: bool = False,
+) -> list[Candidate] | tuple[list[Candidate], list[Candidate]]:
     """Multi-source live search (HF + GitHub + Zenodo); deduped, family-tagged, ranked candidates.
 
     HF surfaces mostly weak models; GitHub/Zenodo are where the strong foundation models live
@@ -219,12 +226,13 @@ def discover_models(
                     continue  # general chat LLM mis-named for "drug discovery" (qwen/gpt/-14b/gguf...)
                 if not (tset & _GOOD_TAGS or any(k in hay for k in _CHEM_KW_GH)):
                     continue  # no real chemistry signal -> skip (was: accept everything but chat junk)
+                sc, detail = _score(int(m.get("downloads", 0) or 0), int(m.get("likes", 0) or 0), tset)
                 by_id[mid] = Candidate(
                     model_id=mid, downloads=int(m.get("downloads", 0) or 0),
                     likes=int(m.get("likes", 0) or 0), tags=tags,
                     library=m.get("library_name", "") or "",
                     family=_classify_family(mid, tags),
-                    score=_score(int(m.get("downloads", 0) or 0), int(m.get("likes", 0) or 0), tset),
+                    score=sc, score_detail=detail,
                 )
         # Zenodo has NO rate limit and is where strong weights live (Uni-Mol, CheMeleon), so search it
         # for EVERY query — otherwise a model-name query that isn't in the first few (e.g. "Uni-Mol")
@@ -247,23 +255,25 @@ def discover_models(
         cid = _norm(c.model_id)
         if any(qn in cid for qn in qnorms):
             c.score += 6.0                                             # named by the LLM -> honor it
+            c.score_detail["name_boost"] = 6.0
 
+    # `ranked` = the FULL scored+sorted recall (the raw pool, pre per-family) — landed for debugging.
     ranked = [c for c in sorted(by_id.values(), key=lambda c: -c.score) if c.score >= min_score]
     if not per_family:
-        return ranked[:top_k]
-    # Per-family TOP-N: take the top `per_family` of EACH family independently (NOT a global top_k
-    # cut). This GUARANTEES every represented family contributes its best `per_family` — a strong but
-    # globally low-ranked family (e.g. 3D / Uni-Mol, only on Zenodo with a low fixed score) can never
-    # be squeezed to zero by a popular family (e.g. many CheMeleon variants). No global top_k squeeze.
-    import collections
-    by_fam: dict[str, list] = collections.defaultdict(list)
-    for c in ranked:
-        by_fam[c.family].append(c)                       # each family's list is already score-sorted
-    result = []
-    for cands in by_fam.values():
-        result.extend(cands[:per_family])                # top `per_family` of THIS family
-    result.sort(key=lambda c: -c.score)                  # present best-first
-    return result
+        selected = ranked[:top_k]
+    else:
+        # Per-family TOP-N: take the top `per_family` of EACH family independently (NOT a global
+        # top_k cut), so a strong but globally low-ranked family (e.g. 3D / Uni-Mol, only on Zenodo
+        # with a low fixed score) can never be squeezed to zero by a popular family.
+        import collections
+        by_fam: dict[str, list] = collections.defaultdict(list)
+        for c in ranked:
+            by_fam[c.family].append(c)                   # each family's list is already score-sorted
+        selected = []
+        for cands in by_fam.values():
+            selected.extend(cands[:per_family])          # top `per_family` of THIS family
+        selected.sort(key=lambda c: -c.score)            # present best-first
+    return (selected, ranked) if with_raw else selected
 
 
 if __name__ == "__main__":
