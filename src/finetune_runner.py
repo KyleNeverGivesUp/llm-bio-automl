@@ -36,7 +36,7 @@ class FineTunePlan:
     epochs: int = 50
     tta: int = 0                       # unimol only: randomized-SMILES test-time aug
     label: str | None = None
-    fast: bool = False                 # smoke test: 1 fold, tiny epochs, ~60 rows — verify auto-FT plumbing only
+    fast: bool = False                 # smoke test: 2 folds, tiny epochs, ~60 rows — verify auto-FT plumbing only (2 folds so the stack's ridge CV works)
     extra: dict = field(default_factory=dict)
 
     @property
@@ -52,7 +52,7 @@ TEMPLATES: dict[str, dict] = {
         "oof": "oof_cheme_mt5.csv", "test": "test_cheme_mt5.csv",
         "args": lambda p, data, out: ["--epochs", str(p.epochs), "--accelerator", "gpu",
                                        "--data-dir", str(data), "--out-dir", str(out)]
-                                      + (["--folds", "1", "--max-rows", "60"] if p.fast else []),  # smoke
+                                      + (["--folds", "2", "--max-rows", "60"] if p.fast else []),  # smoke: 2 folds so the stack's ridge leave-one-fold-out CV has a train split
         "needs": ["train_multitask5.csv", "sc_extra.csv", "test.csv", "folds_calibrated.json"],
     },
     "unimol": {

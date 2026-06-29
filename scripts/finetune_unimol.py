@@ -116,7 +116,7 @@ def main() -> None:
     ap.add_argument("--tta", type=int, default=0, help="randomized-SMILES test-time augmentation (their aug10 => 10)")
     ap.add_argument("--accelerator", default="gpu")  # unimol_tools picks CUDA automatically when present
     ap.add_argument("--keep-reactive", action="store_true")
-    ap.add_argument("--smoke", action="store_true", help="1 fold, 2 epochs, 60 rows — verify the pipeline")
+    ap.add_argument("--smoke", action="store_true", help="2 folds, 2 epochs, 60 rows — verify the pipeline (2 folds so a downstream ridge stack has a CV train split)")
     ap.add_argument("--tta-only", action="store_true",
                     help="skip training; load existing ckpt_f{k} and TTA-predict OOF+test (writes *_tta.csv)")
     args = ap.parse_args()
@@ -137,7 +137,7 @@ def main() -> None:
         tta = 10  # default to aug10 when only doing TTA prediction
     fold_ids = sorted(set(fold_of_row.tolist()))
     if args.smoke:
-        epochs, tta, fold_ids = 2, 0, fold_ids[:1]
+        epochs, tta, fold_ids = 2, 0, fold_ids[:2]   # 2 folds so OOF spans 2 folds -> stack's ridge CV has a train split
         train = train.iloc[:60].reset_index(drop=True)
         fold_of_row, reactive = fold_of_row[:60], reactive[:60]
 
