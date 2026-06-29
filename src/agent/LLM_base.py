@@ -15,6 +15,12 @@ from src.agent.agent_context import AgentResult, RunContext
 load_dotenv()
 
 
+def fallback_disabled() -> bool:
+    """Strict honesty mode: when LLM_NO_FALLBACK=1, every agent re-raises on LLM failure instead of
+    using a hardcoded default — so a run that completes proves every decision was genuinely LLM-made."""
+    return os.environ.get("LLM_NO_FALLBACK") == "1"
+
+
 class BaseAgent(ABC):
     name: str
 

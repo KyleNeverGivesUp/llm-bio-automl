@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.agent.LLM_base import LLMJsonAgent
+from src.agent.LLM_base import LLMJsonAgent, fallback_disabled
 
 # The Set-1 judge — must never be used as train/test (leak guard). Kept out of the LLM's candidates.
 JUDGE_FILE = "phase1_unblinded.csv"
@@ -47,6 +47,8 @@ class SetupAgent(LLMJsonAgent):
             inferred = self._llm_infer(instruction, evidence)
             self.source = "llm"
         except Exception as e:  # noqa: BLE001
+            if fallback_disabled():
+                raise
             print(f"[setup] LLM infer failed ({e}); using validated fallback")
             inferred = dict(_FALLBACK)
             self.source = "fallback"

@@ -28,6 +28,11 @@ def main() -> None:
     ap.add_argument("--brief", default="docs/CHALLENGE_BRIEF.md", help="competition description the Setup agent reads")
     args = ap.parse_args()
 
+    import os
+    if args.no_fallback:
+        os.environ["LLM_NO_FALLBACK"] = "1"   # strict: every agent re-raises on LLM failure (no hardcoded defaults)
+        print("[strict] ALL fallbacks disabled — any LLM failure (after 5-model rotation) will CRASH the run on purpose")
+
     run_dir = Path("outputs/skill_manager")
     run_dir.mkdir(parents=True, exist_ok=True)
     ctx = Ctx(data_dir=DATA, run_dir=run_dir, folds_json=DATA / "folds_calibrated.json",

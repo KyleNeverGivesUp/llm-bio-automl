@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.agent.LLM_base import LLMJsonAgent
+from src.agent.LLM_base import LLMJsonAgent, fallback_disabled
 from src.aggregator import aggregate
 from src.analog_judge import judge_csv
 
@@ -321,8 +321,12 @@ class SkillManager(LLMJsonAgent):
             if isinstance(out, dict):
                 out["_source"] = "llm"
                 return out
+            if fallback_disabled():
+                raise RuntimeError("manager._decide: LLM returned bad output and fallback is disabled")
             return {"skill": "finish", "reason": "bad LLM output", "_source": "fallback"}
         except Exception as e:
+            if fallback_disabled():
+                raise
             # LLM unavailable (e.g., 429 rate-limit on the free model): degrade gracefully, don't crash.
             # If we haven't fine-tuned yet, do the lever; else stack; else finish with what we have.
             print(f"[manager] LLM decide failed ({type(e).__name__}); heuristic fallback")

@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 
 from src.agent import model_registry
-from src.agent.LLM_base import LLMJsonAgent
+from src.agent.LLM_base import LLMJsonAgent, fallback_disabled
 from src.agent.hf_retrieval import DEFAULT_QUERIES, discover_models
 
 # Models we have a verified FINE-TUNE template for. Anything else is frozen-only.
@@ -111,7 +111,11 @@ class RetrievalAgent(LLMJsonAgent):
                 self.source = "llm"
                 return out
         except Exception as e:  # noqa: BLE001
+            if fallback_disabled():
+                raise
             print(f"[retrieval] search-plan LLM failed ({e}); default sweep")
+        if fallback_disabled():
+            raise RuntimeError("retrieval._plan: LLM gave no queries and fallback is disabled")
         self.source = "fallback"
         return {"queries": list(DEFAULT_QUERIES), "families": ["graph", "3d", "smiles"],
                 "rationale": "fallback: generic molecular sweep"}
@@ -143,6 +147,8 @@ class RetrievalAgent(LLMJsonAgent):
             names = out.get("model_names") if isinstance(out, dict) else None
             return [str(n) for n in (names or []) if isinstance(n, str) and 2 <= len(str(n)) <= 30][:10]
         except Exception as e:  # noqa: BLE001
+            if fallback_disabled():
+                raise
             print(f"[retrieval] literature extraction failed ({e})")
             return []
 
@@ -160,6 +166,8 @@ class RetrievalAgent(LLMJsonAgent):
                 out["source"] = "llm"
                 return out
         except Exception as e:  # noqa: BLE001
+            if fallback_disabled():
+                raise
             print(f"[retrieval] satisfaction LLM failed ({e}); deterministic family-coverage fallback")
         covered = {str(m.get("family", "")).lower() for m in local_hits}
         need = {f.lower() for f in (families or [])}
@@ -182,7 +190,11 @@ class RetrievalAgent(LLMJsonAgent):
             if sel:
                 return [self._enforce_template(s, candidates) for s in sel]
         except Exception as e:  # noqa: BLE001
+            if fallback_disabled():
+                raise
             print(f"[retrieval] rank LLM failed ({e}); deterministic rank")
+        if fallback_disabled():
+            raise RuntimeError("retrieval._rank: LLM selected nothing and fallback is disabled")
         return [{"ref": ref, "family": fam, "mode": "finetune",
                  "reason": "validated fallback: has fine-tune template, decorrelated family"}
                 for ref, fam in TEMPLATED.items()]
