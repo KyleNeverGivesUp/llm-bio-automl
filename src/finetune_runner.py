@@ -58,9 +58,9 @@ TEMPLATES: dict[str, dict] = {
     "unimol": {
         "script": "scripts/finetune_unimol.py",
         "oof": "oof_unimol.csv", "test": "test_unimol.csv",
-        "args": lambda p, data, out: ["--epochs", str(p.epochs), "--tta", str(p.tta),
+        "args": lambda p, data, out: ["--epochs", str(p.epochs), "--tta", str(p.tta), "--batch", "16",
                                       "--accelerator", "gpu", "--data-dir", str(data), "--out-dir", str(out)]
-                                     + (["--smoke"] if p.fast else []),  # 1 fold, 2 epochs, 60 rows
+                                     + (["--smoke"] if p.fast else []),  # batch 16: Uni-Mol 3D attn is O(atoms^2); 64 OOMs 24G on full data
         "needs": ["train.csv", "test.csv", "folds_calibrated.json"],
     },
 }

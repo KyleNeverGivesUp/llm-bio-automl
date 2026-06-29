@@ -140,6 +140,7 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
         return ("no candidates — retrieve selected none and _RUN_FALLBACK is disabled (--no-fallback); "
                 "run the LLM-driven retrieve first so it selects models", "deterministic")
     ran, skipped = 0, []
+    failed = ctx.state.setdefault("failed", set())   # don't re-attempt a plan that already failed this session
     for idx, c in enumerate(cands, 1):
         ref = str(c.get("ref", "")); base = ref.split("/")[-1].lower()
         family, mode = c.get("family", ""), c.get("mode", "frozen")
@@ -148,6 +149,9 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
         pid = f"finetune_{bb}" if bb else f"{mode}_{base}"          # dedup finetune by backbone
         if pid in ctx.state["plans"]:
             print(f"[run] ({idx}/{len(cands)}) {pid} already done — skip")
+            continue
+        if pid in failed:                                          # failed before -> don't burn time/GPU retrying
+            print(f"[run] ({idx}/{len(cands)}) {pid} failed earlier — skip (no retry)")
             continue
         what = f"finetune:{bb}(e{ep})" if bb else f"frozen:{base}"
         gpu = " [GPU training]" if bb and not ctx.collect_only else (" [collect-only reuse]" if bb else " [CPU featurize]")
@@ -178,6 +182,7 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
             print(f"[run] ({idx}/{len(cands)}) DONE  {what} — judge RAE {jr:.4f}", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"[run] ({idx}/{len(cands)}) FAIL  {what} — {type(e).__name__}: {str(e)[:90]}", flush=True)
+            failed.add(pid)                                        # mark so later run calls skip it
             skipped.append(f"{base}: {type(e).__name__}")
     verb = "ran (collect-only)" if ctx.collect_only else "ran"
     return f"{verb} {ran} candidate(s)" + (f"; skipped {skipped}" if skipped else ""), "deterministic"
