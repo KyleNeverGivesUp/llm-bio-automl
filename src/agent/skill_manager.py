@@ -41,6 +41,7 @@ class Ctx:
     brief_path: Path | None = None             # competition description the Setup agent reads
     collect_only: bool = False                 # fine-tune: reuse predictions/ instead of GPU (Mac testing)
     fast: bool = False                         # smoke: real but tiny fine-tune (1 fold/2 epochs/60 rows) to test plumbing
+    allow_fallback: bool = True                # if False, run uses ONLY retrieve-selected candidates (no _RUN_FALLBACK) — honesty test
     state: dict = field(default_factory=lambda: {"plans": {}, "best": None, "log": [], "setup": None})
 
 
@@ -134,7 +135,10 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
     from src.finetune_runner import FineTunePlan, build_command, collect_results
     from src.schemas import MenuPlan
     repo = ctx.data_dir.parent.parent
-    cands = ctx.state.get("candidates") or _RUN_FALLBACK
+    cands = ctx.state.get("candidates") or (_RUN_FALLBACK if ctx.allow_fallback else [])
+    if not cands:
+        return ("no candidates — retrieve selected none and _RUN_FALLBACK is disabled (--no-fallback); "
+                "run the LLM-driven retrieve first so it selects models", "deterministic")
     ran, skipped = 0, []
     for idx, c in enumerate(cands, 1):
         ref = str(c.get("ref", "")); base = ref.split("/")[-1].lower()
@@ -323,8 +327,11 @@ class SkillManager(LLMJsonAgent):
             # If we haven't fine-tuned yet, do the lever; else stack; else finish with what we have.
             print(f"[manager] LLM decide failed ({type(e).__name__}); heuristic fallback")
             has_members = any(v.get("judge_rae") is not None for v in ctx.state["plans"].values() if isinstance(v, dict))
+            has_cands = bool(ctx.state.get("candidates"))
             if not has_members:
-                return {"skill": "run", "reason": "fallback: run the decorrelated lever", "_source": "fallback"}
+                if not has_cands:                       # nothing selected yet -> retrieve first (don't skip to run)
+                    return {"skill": "retrieve", "reason": "fallback: no candidates yet -> retrieve to select models", "_source": "fallback"}
+                return {"skill": "run", "reason": "fallback: run the selected candidates", "_source": "fallback"}
             if ctx.state.get("best") is None:
                 return {"skill": "stack", "reason": "fallback: stack the pool", "_source": "fallback"}
             return {"skill": "finish", "reason": "fallback: have a stacked result, stop", "_source": "fallback"}
