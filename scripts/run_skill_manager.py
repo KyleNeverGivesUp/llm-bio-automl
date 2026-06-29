@@ -12,6 +12,13 @@ from pathlib import Path
 
 import pandas as pd
 
+# real-time logs even when nohup-redirected to a file (no need for `python -u`)
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:  # noqa: BLE001
+    pass
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.agent.skill_manager import SkillManager, Ctx   # noqa: E402
 from src.schemas import FoldSpec                          # noqa: E402

@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -143,24 +144,31 @@ class LLMJsonAgent(BaseAgent):
             "X-Title": self.config.app_name,
         }
         last_err: Exception | None = None
-        for i, model in enumerate(models):
-            payload = {"model": model, "temperature": self.config.temperature,
-                       "max_tokens": self.max_tokens, "messages": messages}
-            req = request.Request(url=f"{self.config.base_url}/chat/completions",
-                                  data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-            try:
-                with request.urlopen(req, timeout=self.config.timeout) as resp:
-                    raw = json.loads(resp.read().decode("utf-8"))
-                result = parse(raw) if parse else raw   # parse() may raise on a non-JSON body -> rotate to next model
-                if i:
-                    print(f"[LLM] rotated to {model} (previous {i} model(s) rate-limited/failed/non-JSON)")
-                return result
-            except error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="ignore")
-                last_err = RuntimeError(f"OpenRouter {model} failed: {exc.code} {detail[:100]}")
-            except Exception as exc:  # timeout / network / non-JSON body — rotate to next model
-                last_err = RuntimeError(f"OpenRouter {model} error: {exc}")
-        raise last_err or RuntimeError("all models failed")
+        backoffs = [0.0, 5.0, 15.0]    # round 0 immediate; if ALL models fail, wait then retry the whole list
+        for round_i, wait in enumerate(backoffs):
+            if wait:
+                print(f"[LLM] all {len(models)} models failed; backing off {wait:.0f}s then retrying "
+                      f"(round {round_i + 1}/{len(backoffs)})", flush=True)
+                time.sleep(wait)
+            for i, model in enumerate(models):
+                payload = {"model": model, "temperature": self.config.temperature,
+                           "max_tokens": self.max_tokens, "messages": messages}
+                req = request.Request(url=f"{self.config.base_url}/chat/completions",
+                                      data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+                try:
+                    with request.urlopen(req, timeout=self.config.timeout) as resp:
+                        raw = json.loads(resp.read().decode("utf-8"))
+                    result = parse(raw) if parse else raw   # parse() may raise on a non-JSON body -> rotate
+                    if i or round_i:
+                        print(f"[LLM] using {model} (after {round_i} backoff round(s), "
+                              f"{i} model(s) failed this round)", flush=True)
+                    return result
+                except error.HTTPError as exc:
+                    detail = exc.read().decode("utf-8", errors="ignore")
+                    last_err = RuntimeError(f"OpenRouter {model} failed: {exc.code} {detail[:100]}")
+                except Exception as exc:  # timeout / network / non-JSON body — rotate to next model
+                    last_err = RuntimeError(f"OpenRouter {model} error: {exc}")
+        raise last_err or RuntimeError("all models failed after retries")
 
     def call_json(self, system_prompt: str, user_prompt: str) -> dict:
         # parse runs INSIDE the rotation loop: a model that returns a non-JSON body (e.g. a reasoning
