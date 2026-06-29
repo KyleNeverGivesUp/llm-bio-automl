@@ -129,7 +129,7 @@ class LLMJsonAgent(BaseAgent):
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def _post_rotating(self, messages: list[dict]) -> dict:
+    def _post_rotating(self, messages: list[dict], parse=None) -> dict:
         """POST the chat request, rotating through config.models on rate-limit/timeout/overload.
 
         The free endpoints are throttled upstream independently, so when one 429s the next usually
@@ -151,23 +151,25 @@ class LLMJsonAgent(BaseAgent):
             try:
                 with request.urlopen(req, timeout=self.config.timeout) as resp:
                     raw = json.loads(resp.read().decode("utf-8"))
+                result = parse(raw) if parse else raw   # parse() may raise on a non-JSON body -> rotate to next model
                 if i:
-                    print(f"[LLM] rotated to {model} (previous {i} model(s) rate-limited/failed)")
-                return raw
+                    print(f"[LLM] rotated to {model} (previous {i} model(s) rate-limited/failed/non-JSON)")
+                return result
             except error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="ignore")
                 last_err = RuntimeError(f"OpenRouter {model} failed: {exc.code} {detail[:100]}")
-            except Exception as exc:  # timeout / network — rotate to next model
+            except Exception as exc:  # timeout / network / non-JSON body — rotate to next model
                 last_err = RuntimeError(f"OpenRouter {model} error: {exc}")
         raise last_err or RuntimeError("all models failed")
 
     def call_json(self, system_prompt: str, user_prompt: str) -> dict:
-        raw = self._post_rotating([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ])
-        text = self._extract_text_content(raw)
-        return self._extract_json(text)
+        # parse runs INSIDE the rotation loop: a model that returns a non-JSON body (e.g. a reasoning
+        # model that emits prose/thinking) is treated like a failure and we rotate to the next model.
+        return self._post_rotating(
+            [{"role": "system", "content": system_prompt},
+             {"role": "user", "content": user_prompt}],
+            parse=lambda raw: self._extract_json(self._extract_text_content(raw)),
+        )
 
     def call_json_logged(self, context: RunContext, call_name: str, system_prompt: str, user_prompt: str) -> dict:
         log_path = context.run_dir / "llm_logs" / f"{call_name}.json"
