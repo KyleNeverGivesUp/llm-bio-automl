@@ -58,9 +58,9 @@ TEMPLATES: dict[str, dict] = {
     "unimol": {
         "script": "scripts/finetune_unimol.py",
         "oof": "oof_unimol.csv", "test": "test_unimol.csv",
-        "args": lambda p, data, out: ["--epochs", str(p.epochs), "--tta", str(p.tta), "--batch", "32",
+        "args": lambda p, data, out: ["--epochs", str(p.epochs), "--tta", str(p.tta), "--batch", "64",
                                       "--accelerator", "gpu", "--data-dir", str(data), "--out-dir", str(out)]
-                                     + (["--smoke"] if p.fast else []),  # batch 32: ~12G (fits 24G), closest to the validated default 64 (which OOMs full data); 2x faster than 16
+                                     + (["--smoke"] if p.fast else []),  # batch 64 = the validated default (manual run did not OOM)
         "needs": ["train.csv", "test.csv", "folds_calibrated.json"],
     },
 }
