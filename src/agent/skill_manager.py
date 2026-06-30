@@ -113,6 +113,19 @@ def _ft_backbone(base: str) -> str | None:
     return None
 
 
+def _gpu_free_mib() -> int | None:
+    """Free GPU memory in MiB via nvidia-smi (None if no GPU / nvidia-smi). Used to log + wait that the
+    PREVIOUS model's VRAM is released before launching the next fine-tune (each runs in its own subprocess,
+    so the OS frees it on exit — this just proves it and waits out any straggler/zombie)."""
+    import subprocess
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10)
+        return int(out.stdout.strip().splitlines()[0])
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _frozen_featurizer(base: str, family: str, ref: str) -> tuple[str | None, dict]:
     """Map a candidate to a frozen-embedding featurizer (None = can't run frozen here)."""
     if base == "chemeleon":
@@ -161,6 +174,13 @@ def _skill_run(ctx: Ctx, args: dict) -> tuple[str, str]:
                 p = FineTunePlan(backbone=bb, epochs=ep, label=f"ft_{bb}", fast=ctx.fast)
                 out_dir = (repo / "predictions") if ctx.collect_only else (Path("/tmp") / p.plan_id)
                 if not ctx.collect_only:
+                    import time
+                    free = _gpu_free_mib()                          # prove the previous model's VRAM is freed
+                    waited = 0
+                    while free is not None and free < 6000 and waited < 90:   # straggler still holding VRAM -> wait
+                        print(f"[run] GPU only {free} MiB free — waiting for VRAM to clear ({waited}s)", flush=True)
+                        time.sleep(10); waited += 10; free = _gpu_free_mib()
+                    print(f"[run] GPU free before {bb}: {free} MiB", flush=True)
                     out_dir.mkdir(parents=True, exist_ok=True)
                     subprocess.run(build_command(p, repo, ctx.data_dir, out_dir), check=True)
                 pdir = collect_results(p, out_dir=out_dir, plans_root=ctx.run_dir / "plans",
