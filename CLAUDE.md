@@ -1,15 +1,25 @@
 # CLAUDE.md — project context (auto-loaded every session)
 
-LLM-driven AutoML for the **OpenADMET PXR Activity Prediction** challenge. Goal: top-5 rank on
-the blind Set-2 + a **methodology report due July 1**. This file is the handoff/state doc — read
-`RESULTS.md` for the full numeric log and `docs/` for design docs.
+LLM-driven AutoML for the **OpenADMET PXR Activity Prediction** challenge. This file is the
+handoff/state doc — read `RESULTS.md` for the full numeric log and `docs/` for design docs.
+
+## STATUS (2026-07-01): competition over → pivoting to AAAI publication
+- **The challenge closed July 1 23:59:59 UTC. We MISSED the final leaderboard submission** (timezone
+  mix-up + a full day lost to GPU/OOM debugging). The research + results are intact and valid; only the
+  leaderboard entry was missed. A submission file was built (`predictions/final_submission_0.5783_foldedlabels.csv`,
+  Set-1 true labels + Set-2 predictions) but not uploaded in time.
+- **Prof Pengtao Xie approved targeting AAAI** (next deadline ~Aug 2026). Goal is now a **publication**,
+  not a leaderboard rank. See `docs/GENERALIZATION_PLAN.md` for the AAAI work plan (generalization →
+  ablations → baselines → stats → DataMaster).
+- **Lab context:** this project is an application/extension of the group's AIBuildAI/MLEvolve line
+  (MLE-Bench). Differentiator = molecular-domain + autonomous discovery. **DataMaster is being built by
+  Srivatsan — coordinate before duplicating it.**
 
 ## Current best (Set-1 judge)
-- **RAE 0.5706 / MAE 0.4557** — `predictions/` (`oof_unimol.csv` + `test_unimol.csv` stacked with mt5).
-  Ridge stack of **CheMeleon (graph, fine-tuned) + Uni-Mol (3D, fine-tuned)**. ≈ leaderboard **rank ~20/328**.
-- Progression: 0.6329 → 0.6217 → 0.6135 → 0.6108 → 0.5916 → **0.5706**.
-- The **pipeline itself** (frozen embeddings + sklearn, no fine-tuning) only reaches **RAE ~0.62 / rank ~84**.
-  The gap to 0.57 is **fine-tuning**, which is currently done by standalone scripts OUTSIDE the pipeline.
+- **Hand-assembled best: RAE 0.5706 / MAE 0.4557** — `predictions/` (`oof_unimol.csv` + `test_unimol.csv` stacked with mt5). Ridge stack of **CheMeleon (graph, fine-tuned) + Uni-Mol (3D, fine-tuned)**. ≈ leaderboard **rank ~20/328**.
+- **Fully-autonomous Architecture-B run (2026-06-30, real GPU end-to-end): RAE 0.5783 / MAE 0.4619** — nnls stack of chemeleon (single judge 0.5887, weight 0.716) + unimol (single judge 0.6248, weight 0.273). Same thesis, produced with **zero human model-picking** (setup→retrieve→run→stack all LLM-driven, `skill-source=llm`). Artifacts: `~/Downloads/5783/` / DSMLP `outputs/skill_manager/`.
+- Progression: 0.6329 → 0.6217 → 0.6135 → 0.6108 → 0.5916 → **0.5706** (hand); **0.5783** (autonomous).
+- The **frozen path** (embeddings + sklearn, no fine-tuning) only reaches **RAE ~0.62-0.77**. The gap is **fine-tuning** — verified this run: same chemeleon is 0.7132 frozen vs 0.5887 fine-tuned.
 
 ## The pipeline (mirrors AIBuildAI, arXiv 2604.14455, #1 on MLE-Bench)
 `src/agent/manager_agent.py` orchestrates: setup → **retrieval** → **designer** → coder → selector →
@@ -25,6 +35,8 @@ The original menu loop only combined **8 frozen featurizers × fixed sklearn mod
 
 ## Key findings (don't re-derive)
 - **Decorrelation thesis (validated):** 2 decorrelated FINE-TUNED foundation models (graph + 3D) stacked beat a 48-base correlated ensemble. corr(unimol,mt5)=0.866. Single ≥ ensemble when members are correlated.
+- **Cold-start discovery REPRODUCED (2026-07-01):** with the registry+seed emptied, retrieve autonomously re-surfaces **CheMeleon** (post-LLM-cutoff) from recent arXiv abstracts → then locates weights (`CheMeleon Foundation Model` on Zenodo + openadmet baselines on HF). Honest boundary: discovery works + is probabilistic (LLM ranker didn't always *select* it; arXiv can 429/timeout); usability-as-finetune is still seed/template-encoded. Test: `scratchpad/coldstart_test.py`.
+- **unimol batch: 32 is the validated value, NOT 64.** On the full data, batch 64 OOMs a 24G A5000 (~23G, a large-molecule attention batch; proven on a clean GPU — not a leftover-VRAM issue). batch 32 ≈ 12G fits and reproduces the validated single 0.6248. The `--batch, default=64` "raised from 32" note was an untested bump. chemeleon (D-MPNN, linear memory) is fine at 128. Each fine-tune runs as its own subprocess → its VRAM is freed on exit automatically (verified: `GPU free before unimol: 24247 MiB`).
 - **Frozen embedding ≠ fine-tuning:** frozen CheMeleon ~0.68 single / ~0.62 ensemble; FINE-TUNED 0.5904. The gain is in fine-tuning.
 - **Negatives (verified, don't retry):** TTA aug10 (helps single, HURTS stack — reduces decorrelation), counter-assay weighting, Mordred features, isotonic calibration, ChemBERTa/MolFormer (SMILES transformers, ~0.74-0.82, weak).
 - **Model-integration friction:** strong models live on GitHub not HF (CheMeleon, Uni-Mol, MolE, GROVER, MolCLR). Each = a dependency-archaeology battle (old torch/python, fast_transformers, torch_scatter). MolE weights are withheld; IBM multi-view blocked on fast_transformers.
@@ -46,11 +58,16 @@ The original menu loop only combined **8 frozen featurizers × fixed sklearn mod
 - Weights auto-download on first run: CheMeleon (chemprop→Zenodo `~/.chemprop`), Uni-Mol (unimol_tools→Zenodo), ChemBERTa (transformers→HF). **Do not commit weights** — DSMLP fetches them.
 - Local dev: `uv run python ...`. Fine-tuning needs the pod GPU.
 
-## Next steps (priority order)
-1. ✅ **LLM-orchestrated fine-tuning** (prof-approved) — DONE end-to-end via `run_finetune_auto.py` (reproduces 0.5706). Remaining: wire `finetune_designer` into `manager_agent` so the main loop does it natively; wire `hf_retrieval` into `retrieval_agent`.
-2. **End-game Set-1 fold-in** (~0.10 on singles, irreversible — consumes the judge) for the final Set-2 submission. Needs a working GPU env (`~/.local` torch/chemprop/unimol kept). Do LAST.
-3. **Methodology report** (July 1, mandatory).
-4. (optional) DataMaster = data-side autonomous twin of the model-retrieval component (paper completeness, low score value).
+## Next steps — AAAI publication track (see `docs/GENERALIZATION_PLAN.md`)
+1. **De-hardcode the pipeline** — pass setup's inferred task/target/metric through ALL prompts + the fine-tune template's target columns. Currently ~5 prompts hardcode "molecular pEC50 regression / RAE" and `finetune_cheme_mt5.py` hardcodes the 5 PXR assay columns (`TARGETS`). Also PXR-specific: `setup._FALLBACK`, `JUDGE_FILE`, `folds_calibrated.json`. Full audit + the fix list live in `docs/GENERALIZATION_PLAN.md`.
+2. **Generalization (the #1 experiment)** — run the SAME pipeline on ≥2 more molecular property tasks (start: **Lipophilicity + ESOL**, MoleculeNet regression, scaffold split) to show it isn't PXR-tuned.
+3. **Ablations** — LLM vs fixed setup; LLM-rank vs random model selection; fine-tune vs frozen; decorrelation vs not; literature-discovery vs not.
+4. **Baselines** — non-LLM AutoML (auto-sklearn / FLAML), random selection, domain SOTA (published CheMeleon/Uni-Mol/D-MPNN numbers).
+5. **Statistical rigor** — multiple seeds/runs + error bars (run-to-run: 0.5706 hand vs 0.5783 autonomous).
+6. **DataMaster** — data-side autonomous twin (external-data sourcing + judge-gated integration). **Coordinate with Srivatsan (he owns the DataMaster codebase).**
+
+## Note: the WORKING pipeline is Architecture B = `src/agent/skill_manager.py`
+`run_skill_manager.py` runs it end-to-end: setup → retrieve → run (finetune via template / frozen via featurizer) → stack (forward-selection + nnls). This is what produced the autonomous 0.5783. (`manager_agent.py` is the older menu-loop orchestrator.) Flags: `--fast` (smoke: 2 folds/tiny epochs), `--no-fallback` (strict: every LLM-decision re-raises instead of using a hardcoded default — proves LLM-driven), `--collect-only` (reuse predictions/, no GPU).
 
 ## Running on DSMLP
 - SSH: `~/.ssh/config` has `dsmlp` (ControlMaster → Duo once/8h). Pod: `launch.sh -g 1 -v a5000 -m 64`, 6h limit.

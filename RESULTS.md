@@ -6,10 +6,26 @@
 >
 > | Field | Value |
 > |---|---|
-> | Updated | 2026-06-21 |
-> | Mode | **Treat as Phase 1**: train on broad 4,139 only, predict all 513. Deadline July 1. |
+> | Updated | 2026-07-01 |
+> | Mode | Competition CLOSED (July 1 23:59:59 UTC). **Missed the final leaderboard submission.** Pivoting to AAAI publication (~Aug 2026). |
 > | Metric | RAE (lower better); leaderboard bootstraps 1000× |
-> | Status | **Approach 1 COMPLETE (incl. M3).** Menu judged on Set 1; CV calibrated; final submission **0.6266** (`outputs/final/`). **M3 judge-in-the-loop auto-design built & working** (LLM Designer + fallback + budget + resume; auto-loop → 0.618–0.624). Next: deferred data side. |
+> | Status | **Architecture B (`skill_manager.py`) verified END-TO-END on real GPU** → fully-autonomous run RAE **0.5783** (chemeleon 0.5887 + unimol 0.6248, nnls). Hand-assembled best remains **0.5706**. Cold-start discovery of CheMeleon reproduced. Next = AAAI plan in `docs/GENERALIZATION_PLAN.md`. |
+
+## 2026-07-01 — Autonomous end-to-end run + competition close
+
+- **Fully-autonomous Architecture-B run (real GPU, `run_skill_manager.py`, zero human model-picking):**
+  setup(llm) → retrieve(llm; searched 33 models, selected chemeleon/unimol/frozen-others) → run(fine-tune
+  chemeleon+unimol via templates) → stack(forward-selection + nnls) → **Set-1 judge RAE 0.5783 / MAE 0.4619**.
+  Per-model judge: chemeleon(FT) **0.5887**, unimol(FT) **0.6248**; frozen baselines 0.669–0.767 (fine-tuning
+  is the lever, quantified). nnls weights: chemeleon 0.716 / unimol 0.273. (OOF/CV estimate was 0.5465 —
+  optimistic vs the 0.5783 judge; report the judge number.)
+- **Cold-start discovery reproduced:** emptied registry+seed → retrieve pulled CheMeleon from recent arXiv
+  abstracts → located weights on Zenodo (`CheMeleon Foundation Model`) + HF. Discovery works but is
+  probabilistic (the LLM ranker didn't always select it); usability-as-finetune is seed/template-encoded.
+- **unimol batch finding:** 64 OOMs 24G on full data (proven on a clean GPU — unimol's own attention, not
+  leftover VRAM); **32 is the validated value** (reproduces 0.6248). chemeleon (D-MPNN) fine at 128.
+- **Competition:** closed July 1 23:59:59 UTC; final submission (`predictions/final_submission_0.5783_foldedlabels.csv`,
+  Set-1 true labels + Set-2 model preds) was built but **not uploaded in time**. Research value is intact for AAAI.
 
 ---
 

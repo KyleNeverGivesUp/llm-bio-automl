@@ -1,6 +1,8 @@
 # PRODUCT DESIGN — llm-bio-automl
 
-> Product design for an LLM-orchestrated molecular-property AutoML agent, with one North Star: **finishing Top 5 on openadmet/pxr-challenge**.
+> Product design for an LLM-orchestrated molecular-property AutoML agent. **Original North Star was Top-5 on openadmet/pxr-challenge; that competition closed 2026-07-01 (submission missed).** North Star is now an **AAAI publication (~Aug 2026)** demonstrating a *general* LLM-driven molecular-AutoML system.
+
+> **STATUS 2026-07-01:** the pipeline (Architecture B, `src/agent/skill_manager.py`) runs fully autonomously end-to-end on a real GPU → **RAE 0.5783** on the PXR Set-1 judge (chemeleon 0.5887 + unimol 0.6248, nnls), reproducing the hand-tuned 0.5706 story with zero human model-picking; cold-start discovery of CheMeleon reproduced. Product focus is now generalization + rigor for AAAI — see [GENERALIZATION_PLAN.md](GENERALIZATION_PLAN.md). PXR-specific goals below (Top-5, fold-in, Set-1-as-judge) are retained as historical context.
 
 > Rendered flowchart: [assets/workflow.png](../assets/workflow.png) (see §9). The Mermaid source below also renders natively on GitHub or in a VS Code Mermaid-preview extension.
 
@@ -169,8 +171,53 @@ Bilingual reference for the core method terms (for the report / discussing with 
   1. **`scripts/run_auto.py`** — the original *menu loop*: LLM Designer proposes `featurizer×model` plans → deterministic CV runner executes → select → ridge-stack → Set-1 judge. Now also calls a **fine-tune phase** + live retrieval.
   2. **`scripts/run_skill_manager.py` (Architecture B)** — an LLM **Manager** (`src/agent/skill_manager.py`) that **reads skills whose descriptions encode our lessons and decides the next skill itself** (retrieve / design_menu / finetune / stack), looping until it calls `finish`. This is the "control flow is the LLM's, not a fixed script" form.
 - **What is LLM-driven vs deterministic today:** LLM = Designer (`menu_designer`), Fine-tune Designer (`finetune_designer`), Tuner (`menu_tuner`), Manager-B (`skill_manager`). Deterministic = data setup/curation, CV/fine-tune execution, ridge stack, Set-1 judge, selector, live HF retrieval (HTTP). Every LLM step has a **deterministic fallback**, so the loop always completes (logged as `fallback`).
-- **Verified vs not (honesty):** the **orchestration** is verified end-to-end on a Mac in **`--collect-only`** mode — it *reuses* pre-computed fine-tune predictions (no GPU) and reproduces 0.5706. A **real** end-to-end run that *trains* the foundation models needs the **DSMLP A5000 GPU** (drop `--collect-only`, ~2h/backbone) and has not yet been run through Architecture B.
+- **Verified end-to-end on real GPU (2026-06-30):** Architecture B ran fully autonomously on a DSMLP A5000 (no `--collect-only`) — it actually fine-tuned CheMeleon + Uni-Mol and produced **RAE 0.5783** (chemeleon 0.5887 + unimol 0.6248, nnls stack), reproducing the 0.5706 story with **zero human model-picking** (setup/retrieve/run/stack all `skill-source=llm`). The earlier Mac `--collect-only` mode (reuses pre-computed predictions) remains the fast no-GPU path.
 - **Reference:** the agent loop targets **AIBuildAI** (#1 MLE-Bench) — 6 LLM-driven agents (Setup/Manager/Designer/Coder/Tuner/Aggregator). Our two remaining gaps to that bar: **parallel candidate chains** and a **code-writing Coder** (ours instantiates verified templates). Full comparison: **[AIBUILDAI.md](AIBUILDAI.md)**.
+
+## 0.2 Domain scope & task taxonomy (2026-07-01) — where this work sits
+
+This system is **LLM-driven AutoML for MOLECULAR PROPERTY PREDICTION**. The AAAI scope is *general
+**within** molecular property prediction* — **not** general ML (that's the lab's AIBuildAI/MLE-Bench line).
+Two axes place us:
+
+- **Method axis (what we model):** Chemistry / cheminformatics — molecules as SMILES / graph / 3D.
+- **Application axis (why it matters):** Biomedical / drug discovery — most endpoints (esp. ADMET) exist to develop drugs.
+
+We sit at the **intersection: molecular-structure methods (chemistry) applied to drug-relevant endpoints
+(biomedical).** PXR is a drug-metabolism nuclear receptor → predicting PXR activity is a *chemistry method
+for a biomedical purpose*. (So: neither pure chemistry nor pure medicine — chemistry methods serving biomedicine.)
+
+```
+AI for Science
+├── Chemistry / Cheminformatics           ← our METHODS live here (model molecules)
+│   ├── ★ Molecular Property Prediction    ← OUR AREA (structure → scalar/label)
+│   │   ├── Physicochemical  solubility (ESOL), lipophilicity/logD (Lipophilicity), hydration (FreeSolv)
+│   │   ├── Bioactivity      binding/potency — PXR pEC50, BACE, kinases
+│   │   ├── ADMET            hERG (cardiotox), Caco2 (permeability), CYP, clearance   ← drug-relevant slice
+│   │   └── Quantum          HOMO-LUMO, energies (QM9)                                 [out of scope: QM 3D]
+│   ├── Molecular Generation / Design
+│   ├── Reaction / Retrosynthesis
+│   └── Materials (crystals, polymers)
+├── Biology / Bioinformatics   (proteins, genomics, single-cell)
+└── Physics / Materials
+```
+
+**Generalization task set — span property TYPES, stay in the molecular domain** (spanning types is what
+makes "general within molecular" credible; expanding the *domain* would rebuild all molecular infra AND
+collide with AIBuildAI, so it's out of scope — see `CLAUDE.md` → Next steps):
+
+| Property type | Task | Metric | Source (benchmark/competition) | Status |
+|---|---|---|---|---|
+| Bioactivity | **PXR** (pEC50) | RAE | OpenADMET **competition** (real blind test) | ✅ 0.5783 autonomous |
+| Physicochemical | **Lipophilicity** (logD) | RMSE | MoleculeNet **benchmark** | to run |
+| Physicochemical | **ESOL** (solubility logS) | RMSE | MoleculeNet **benchmark** | to run |
+| Bioactivity (classification) | BACE (binding) | ROC-AUC | MoleculeNet | optional — adds regression→classification |
+| ADMET | hERG / Caco2 | RMSE/AUC | TDC | optional — ADMET breadth |
+
+**Benchmark vs competition:** MoleculeNet/TDC are reproducible *benchmarks* (public labels + published SOTA
+→ clean apples-to-apples comparison, what AAAI reviewers expect); PXR is a real *competition* (blind test)
+kept as a real-world anchor. Benchmarks carry the systematic generalization; the competition anchors
+real-world validity. Full plan: **[GENERALIZATION_PLAN.md](GENERALIZATION_PLAN.md)**.
 
 ## 2. Background & Problem Statement
 

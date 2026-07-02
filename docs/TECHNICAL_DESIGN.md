@@ -6,16 +6,21 @@
 
 | Field | Value |
 |---|---|
-| Version | v1.7 |
-| Status | Live (best Set-1 judge RAE **0.5706**); see T1.2 for the current module reality |
+| Version | v1.8 |
+| Status | **Architecture B verified END-TO-END on real GPU** → fully-autonomous RAE **0.5783** (chemeleon 0.5887 + unimol 0.6248, nnls); hand best 0.5706. Competition closed 2026-07-01 (submission missed) → **pivot to AAAI**. See T1.2 + `GENERALIZATION_PLAN.md`. |
 | Owner | Kyle |
 | Created | 2026-06-20 |
-| Updated | 2026-06-26 |
+| Updated | 2026-07-01 |
 
-> **Reading note (2026-06-26):** sections T1 / T3 / T4 below were written as the system was *planned* (M0→M4),
-> so their "new (M1)" / "rewrite (M3)" statuses are historical. For **what actually runs today** — including
-> Architecture B (the LLM Manager), LLM-orchestrated fine-tuning, and live retrieval — read **T1.2** and the
-> PRD's **§0.1 Current state**. AIBuildAI (the agent-loop reference) is in **[AIBUILDAI.md](AIBUILDAI.md)**.
+> **Reading note (2026-07-01):** the PXR competition is over (submission missed); goal is now an **AAAI
+> paper** — the technical priority shifts to **de-hardcoding the pipeline for generalization** (it hardcodes
+> PXR/pEC50/RAE in ~5 prompts + the fine-tune templates' target columns) then running on more molecular
+> tasks. Plan: **[GENERALIZATION_PLAN.md](GENERALIZATION_PLAN.md)**.
+>
+> Sections T1 / T3 / T4 below were written as the system was *planned* (M0→M4), so their "new (M1)" /
+> "rewrite (M3)" statuses are historical. For **what actually runs today** — Architecture B (the LLM
+> Manager `skill_manager.py`), LLM-orchestrated fine-tuning, live retrieval — read **T1.2** and the PRD's
+> **§0.1 Current state**. AIBuildAI (the agent-loop reference) is in **[AIBUILDAI.md](AIBUILDAI.md)**.
 
 ---
 

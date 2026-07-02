@@ -4,6 +4,20 @@ Richer context than `CLAUDE.md` (which has the distilled state). Read both + `RE
 This captures the *reasoning* from the session that got us to RAE 0.5706, so a fresh Claude
 (e.g. on DSMLP) can pick up where we left off without re-deriving.
 
+## UPDATE 2026-07-01 — competition over, pivot to AAAI
+- **Architecture B (`skill_manager.py`) now runs END-TO-END on a real GPU**, fully autonomous
+  (setup→retrieve→run→stack, all LLM-driven) → **RAE 0.5783** (chemeleon 0.5887 + unimol 0.6248, nnls).
+  This is the "0.5706 story" reproduced with zero human model-picking.
+- **Cold-start discovery reproduced**: emptied registry+seed → retrieve re-found CheMeleon from arXiv →
+  Zenodo/HF (`scratchpad/coldstart_test.py`).
+- **unimol batch = 32** is the validated value (64 OOMs 24G on full data — proven on a clean GPU, not
+  leftover VRAM). chemeleon fine at 128.
+- **Competition CLOSED July 1 23:59:59 UTC — we MISSED the leaderboard submission** (timezone mix-up +
+  a full day lost to GPU/OOM debugging). Research value intact.
+- **Prof approved AAAI (~Aug 2026).** Work plan: `docs/GENERALIZATION_PLAN.md` (de-hardcode →
+  generalize to Lipophilicity+ESOL → ablations → baselines → stats → DataMaster). **DataMaster is
+  Srivatsan's — coordinate.**
+
 ## How we got to 0.5706 (the decorrelation story)
 We were stuck at ~0.61 with a 48-base ensemble (all CheMeleon-flavored frozen/fine-tuned variants).
 The insight: that ensemble was **saturated** — every new member was correlated, so stacking added
