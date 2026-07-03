@@ -68,3 +68,40 @@ are the next AAAI experiments; see `CLAUDE.md` → "Next steps".)
 ## Coordination
 **DataMaster (data-side agent) is owned by Srivatsan** — align before building it. This plan is the
 *model-side* generalization; the data-side twin is a separate track.
+
+---
+
+## Experiment harness (build alongside Phase 0 — they are the same interface)
+The generalization + ablation experiments are a grid `{tasks} × {ablation configs} × {seeds}` (~50+
+runs) — needs a small **harness** (not the lab's big one). Minimal design:
+```
+harness/
+  tasks/*.yaml    # per-task spec: {name, data_dir, target_col, metric, brief_path}  (the UNIFORM task interface)
+  configs.yaml    # full / no_llm_setup / random_select / frozen_only / no_decorrelation / no_literature
+  run.py          # for task×config×seed: run_pipeline in a SUBPROCESS; resume (skip done); log+continue on crash
+  aggregate.py    # runs/*.json -> pandas -> paper tables (mean±std per task/config)
+  runs/           # one json per cell: {task, config, seed, metric, status, log_path}
+```
+Principles (the point of a harness): **isolation** (one crash/OOM doesn't kill the sweep), **resumability**
+(skip done cells), **uniform task interface** (same runner on any task = enables generalization),
+**structured results** (tag every metric by task/config/seed → trivial aggregation), **harness ≠ pipeline**.
+Phase 0's de-hardcoding *produces* the uniform task interface, so build them together. Learn from
+COSMOS `pipeline_runner.py` + Srivatsan's MLE-Bench-Lite harness (align, don't rebuild).
+
+## Optional 2nd contribution: frontier-graph model discovery (reuse CSE190 COSMOS)
+Our retrieval/discovery is currently **one-shot + flat** (plan → search once → rank). The user's CSE190
+**COSMOS deep-research agent** (`~/Documents/UCSD/2026SPRING/CSE190/2_Projects/CSE190-Project`) has reusable
+patterns to upgrade it into **iterative frontier-expansion over a model-knowledge-graph**:
+- **seed → frontier loop** (seed models → find related/cited → expand frontier → coverage/budget stop) vs our single sweep.
+- **Leiden community detection** on the model graph → **auto-discovers families** (could replace the hardcoded 5-family vocab).
+- **PageRank centrality** → rank models by graph importance (vs like/download).
+- **abductive bridge → search probe**: find graph gaps/weak families → generate targeted arXiv/HF probes (vs a fixed query list).
+- **evidence / graph / probe discipline** ≡ our **verified-artifact / registry-candidate / LLM-proposal** boundary — formalizes the "discovery ≠ usable" line.
+Priority: **after** generalization + ablations + baselines (those are the AAAI floor). Could be the paper's
+2nd contribution or future work. The evidence/graph/probe *framing* is ~free to adopt in the writing now.
+
+## Lab context / coordination (don't duplicate)
+- **MLEvolve** = the group's ML-engineering *agent*; **MLE-Bench** = the *benchmark* it's tested on;
+  **AIBuildAI** = the #1-on-MLE-Bench system this pipeline follows. Ours = molecular-domain application + autonomous discovery.
+- **DataMaster (data-side agent) is owned by Srivatsan** — coordinate before building the data-side twin.
+- **Agent memory distillation is Haoming's** (trace2skill baseline) — our self-growing registry + lesson-encoding skills are a simple form; compare notes.
