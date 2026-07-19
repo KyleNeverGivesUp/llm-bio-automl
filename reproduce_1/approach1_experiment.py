@@ -131,17 +131,11 @@ def main() -> None:
     pd.DataFrame({NAME: test[NAME], SMILES: test[SMILES], PRIMARY: test_pred}).to_csv(
         args.out / "test_approach1.csv", index=False)
 
-    # score, raw and variance-match calibrated (a,b from THIS model's own OOF)
-    y, p = broad[PRIMARY][done].to_numpy(float), oof[done]
-    a = y.std() / p.std(); b = y.mean() - a * p.mean()
-    p1 = pd.read_csv(args.data_dir / "phase1_unblinded.csv")[[NAME, TGT]].dropna(subset=[TGT])
+    # score — #1 uses NO calibration, so we report the raw multitask prediction only.
     p2 = pd.read_csv(args.data_dir / "phase2_unblinded.csv")[[NAME, TGT]].dropna(subset=[TGT])
-    print(f"\n=== Approach-1 Set-2 (260 blind) ===  [calibration a={a:.3f} b={b:+.3f} from its own OOF]")
-    score(test[NAME], test_pred, p2, "Approach-1 (raw)")
-    score(test[NAME], a * test_pred + b, p2, "Approach-1 (+ calibration)")
-    print("  --- references ---")
-    print("  our current best (ensemble + calibration) 0.5923 | #2 (best public) 0.5676 | #1 (proprietary) 0.5631")
-    print("  our single CheMeleon mt5 was 0.6301; this adds 4-conc + LogD aux over that.")
+    print("\n=== Approach-1 Set-2 (260 blind) — #1's base pillar, no calibration ===")
+    score(test[NAME], test_pred, p2, "Approach-1")
+    print("  reference: #1 (matcha) 0.5631 | #2 (best public) 0.5676 | rank-12 0.586")
 
 
 if __name__ == "__main__":
