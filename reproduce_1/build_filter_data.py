@@ -1,48 +1,37 @@
-"""#1 technique 7: filter ~30 training pEC50 compounds with elements or high-level structures
-(macrocycles, long acyclic chains) not found in EITHER test set. Filter applies to the pEC50 broad
-rows only; aux rows kept."""
-import pandas as pd, numpy as np, networkx as nx
+"""#1 technique 7 (faithful, ~30): filter training pEC50 compounds with elements or macrocyclic
+structures not found in either test set. #1's report: "removing about ~30 compounds with elements
+or high-level structures (macrocycles, long acyclic molecules) not found in either test set."
+
+Match #1's ~30 exactly: elements-not-in-test + macrocycle (standard definition, ring >= 12; the test
+set's largest ring is 8, so any >=12 ring is test-absent). Filter applies to the pEC50 broad rows
+only; aux rows kept."""
+import pandas as pd, numpy as np
 from rdkit import Chem, RDLogger
 RDLogger.DisableLog("rdApp.*")
-
-def longest_acyclic_chain(m):
-    """longest path (in atoms) through NON-ring atoms — captures long chains, not big ring systems."""
-    g = nx.Graph()
-    ring = {a.GetIdx() for a in m.GetAtoms() if a.IsInRing()}
-    for b in m.GetBonds():
-        i, j = b.GetBeginAtomIdx(), b.GetEndAtomIdx()
-        if i not in ring and j not in ring:
-            g.add_edge(i, j)
-    best = 0
-    for comp in nx.connected_components(g):
-        sub = g.subgraph(comp)
-        ecc = nx.eccentricity(sub)
-        best = max(best, max(ecc.values()) + 1)   # diameter in nodes
-    return best
 
 def feats(sm):
     m = Chem.MolFromSmiles(str(sm))
     if m is None: return None
     rings = [len(r) for r in m.GetRingInfo().AtomRings()]
-    return (set(a.GetSymbol() for a in m.GetAtoms()), max(rings) if rings else 0, longest_acyclic_chain(m))
+    return set(a.GetSymbol() for a in m.GetAtoms()), (max(rings) if rings else 0)
 
 pool = pd.read_csv("data/pxr_activity/train_approach1.csv")
 broad = pool[pool["pEC50"].notna()].reset_index(drop=True); aux = pool[pool["pEC50"].isna()]
 test = pd.read_csv("data/pxr_activity/test.csv")
 te = [x for x in (feats(s) for s in test["SMILES"]) if x]
-test_elems = set().union(*[x[0] for x in te]); test_maxring = max(x[1] for x in te); test_maxchain = max(x[2] for x in te)
-print(f"test envelope: elements={sorted(test_elems)}  max_ring={test_maxring}  max_acyclic_chain={test_maxchain}")
+test_elems = set().union(*[x[0] for x in te]); test_maxring = max(x[1] for x in te)
+print(f"test envelope: elements={sorted(test_elems)}  max_ring={test_maxring}")
 
 from collections import Counter
 drop = []
 for i, sm in enumerate(broad["SMILES"]):
     f = feats(sm)
     if f is None: continue
-    elems, maxring, chain = f
+    elems, maxring = f
     if not elems <= test_elems: drop.append((i, "elem"))
-    elif maxring > test_maxring: drop.append((i, "macro/bigring"))
-    elif chain > test_maxchain: drop.append((i, "long_chain"))
+    elif maxring >= 12: drop.append((i, "macrocycle"))     # standard macrocycle; test has none (max 8)
 print(f"\nfiltered {len(drop)} / {len(broad)}  reasons: {dict(Counter(r for _, r in drop))}")
+
 drop_set = {i for i, _ in drop}
 kept_idx = [i for i in range(len(broad)) if i not in drop_set]   # original positions of kept broad rows
 keep = broad.iloc[kept_idx].reset_index(drop=True)
