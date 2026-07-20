@@ -68,6 +68,17 @@ def descriptors(sl):
     return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
 
+def _pred_col(csv):
+    """Read a chemprop prediction CSV robustly — the pred column may not be named exactly 'pEC50'."""
+    df = pd.read_csv(csv)
+    if TGT in df.columns:
+        return pd.to_numeric(df[TGT], errors="coerce").to_numpy(float)
+    for c in df.columns:
+        if c != SMILES and pd.api.types.is_numeric_dtype(df[c]):
+            return df[c].to_numpy(float)
+    raise SystemExit(f"no prediction column in {csv}: cols={list(df.columns)}")
+
+
 def sklearn_oof(make, Xtr, Xte, y, fold):
     """5-fold OOF + averaged test for a fresh-per-fold sklearn-style model."""
     oof = np.zeros(len(y)); te = np.zeros(Xte.shape[0])
@@ -95,8 +106,8 @@ def chemprop_plain(train_df, test_df, fold, accel="gpu", epochs=50, workers=8):
             subprocess.run(["chemprop", "predict", "--test-path", str(src), "-s", SMILES,
                             "--model-paths", ck, "--preds-path", str(dst), "--accelerator", accel,
                             "-n", str(workers)], check=True)
-        oof[fold == k] = pd.read_csv(OUT / f"_ho{k}.csv")[TGT].to_numpy(float)
-        te_cols.append(pd.read_csv(OUT / f"_to{k}.csv")[TGT].to_numpy(float))
+        oof[fold == k] = _pred_col(OUT / f"_ho{k}.csv")
+        te_cols.append(_pred_col(OUT / f"_to{k}.csv"))
     return oof, np.mean(np.column_stack(te_cols), axis=1)
 
 
@@ -118,13 +129,22 @@ def main():
     Xm_tr, Xm_te = morgan(train[SMILES].tolist()), morgan(test[SMILES].tolist())
     from tabicl import TabICLRegressor
 
+    OUT.mkdir(parents=True, exist_ok=True)
+
+    def cached(name, fn):                       # cache each member so a crash doesn't lose slow ones
+        f = OUT / f"m_{name}.npz"
+        if f.exists():
+            d = np.load(f); print(f"  {name}: cached", flush=True); return d["oof"], d["te"]
+        o, t = fn(); np.savez(f, oof=o, te=t); print(f"  {name}: done", flush=True); return o, t
+
     members = {}
-    members["chemeleon"] = reuse("oof_cheme_mt5.csv", "test_cheme_mt5.csv")   # 2. Chameleon
-    members["unimol"] = reuse("oof_unimol.csv", "test_unimol.csv")            # 3. Unimol2 (stand-in)
-    members["svr"] = sklearn_oof(lambda: make_pipeline(StandardScaler(with_mean=False),
-                                 SVR(kernel="rbf", C=10, gamma="scale")), Xm_tr, Xm_te, y, fold)  # 5. SVR
-    members["tabicl"] = sklearn_oof(lambda: TabICLRegressor(device="cuda:0"), Xd_tr, Xd_te, y, fold)  # 4. TabICL
-    members["chemprop"] = chemprop_plain(train, test, fold)                   # 1. Chemprop (GPU) — last (slow)
+    members["chemeleon"] = cached("chemeleon", lambda: reuse("oof_cheme_mt5.csv", "test_cheme_mt5.csv"))   # 2
+    members["unimol"] = cached("unimol", lambda: reuse("oof_unimol.csv", "test_unimol.csv"))               # 3 (stand-in)
+    members["svr"] = cached("svr", lambda: sklearn_oof(lambda: make_pipeline(StandardScaler(with_mean=False),
+                            SVR(kernel="rbf", C=10, gamma="scale")), Xm_tr, Xm_te, y, fold))               # 5
+    members["tabicl"] = cached("tabicl", lambda: sklearn_oof(lambda: TabICLRegressor(device="cuda:0"),
+                            Xd_tr, Xd_te, y, fold))                                                        # 4
+    members["chemprop"] = cached("chemprop", lambda: chemprop_plain(train, test, fold))                   # 1 (GPU, last)
 
     for name, (o, _) in members.items():
         print(f"  {name:10s} OOF RAE={score_all(y, o)['rae']:.4f}")
