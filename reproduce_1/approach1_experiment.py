@@ -113,6 +113,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", type=Path, default=REPO / "data/pxr_activity")
     ap.add_argument("--pool", type=Path, default=REPO / "data/pxr_activity/train_approach1.csv")
+    ap.add_argument("--folds", type=Path, default=None,
+                    help="fold-assignment json (default: <data-dir>/folds_calibrated.json). Use the aligned "
+                         "filtered file when --pool is the technique-7 filtered pool.")
     ap.add_argument("--out", type=Path, default=Path("/tmp/approach1"))
     ap.add_argument("--epochs", type=int, default=50)
     ap.add_argument("--batch-size", type=int, default=64)
@@ -128,7 +131,8 @@ def main() -> None:
     broad = pool[pool[PRIMARY].notna()].reset_index(drop=True)        # the 4,139 pEC50-labelled rows
     extra = pool[pool[PRIMARY].isna()].reset_index(drop=True)         # sc-only + logD-only aux (always train)
     import json
-    folds = json.loads((args.data_dir / "folds_calibrated.json").read_text())["assignments"]
+    folds_path = args.folds or (args.data_dir / "folds_calibrated.json")
+    folds = json.loads(Path(folds_path).read_text())["assignments"]
     fold_of = np.array([int(folds[str(i)]) for i in range(len(broad))])
     print(f"[data] broad(pEC50)={len(broad)}  aux(always-train)={len(extra)}  folds={sorted(set(fold_of))}")
 
