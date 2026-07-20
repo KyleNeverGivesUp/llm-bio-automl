@@ -146,8 +146,21 @@ def main():
                             Xd_tr, Xd_te, y, fold))                                                        # 4
     members["chemprop"] = cached("chemprop", lambda: chemprop_plain(train, test, fold))                   # 1 (GPU, last)
 
-    for name, (o, _) in members.items():
-        print(f"  {name:10s} OOF RAE={score_all(y, o)['rae']:.4f}")
+    p2 = pd.read_csv(DATA / "phase2_unblinded.csv")[[NAME, TGT]].dropna(subset=[TGT])
+    a1 = pd.read_csv(PRED / "test_approach1_desc.csv").set_index(NAME).reindex(tnames)[TGT].to_numpy(float)
+
+    def sc(pred, tag, quiet=False):
+        m = p2.merge(pd.DataFrame({NAME: tnames, "y": pred}), on=NAME)
+        s = score_all(m[TGT].to_numpy(float), m["y"].to_numpy(float))
+        if not quiet:
+            print(f"    {tag:34s} RAE={s['rae']:.4f}  MAE={s['mae']:.4f}")
+        return s["rae"]
+
+    # WHO is actually good on the blind set? OOF flatters overfitters; Set-2 is the truth.
+    print("\n=== each member: OOF(train) vs Set-2(blind) ===")
+    print(f"    {'Approach 1 (descriptors) [REF]':22s}                   Set-2 {sc(a1, '', True):.4f}")
+    for name, (o, t) in members.items():
+        print(f"    {name:22s} OOF {score_all(y, o)['rae']:.4f}   Set-2 {sc(t, '', True):.4f}")
 
     order = ["chemprop", "chemeleon", "unimol", "tabicl", "svr"]
     OOF = np.column_stack([members[n][0] for n in order])
@@ -156,14 +169,6 @@ def main():
     zoo = las.predict(TE)
     print(f"\n[LASSO] weights {dict(zip(order, np.round(las.coef_, 3)))}  intercept {las.intercept_:.3f}")
     print(f"[LASSO] zoo OOF RAE={score_all(y, las.predict(OOF))['rae']:.4f}")
-
-    a1 = pd.read_csv(PRED / "test_approach1_desc.csv").set_index(NAME).reindex(tnames)[TGT].to_numpy(float)
-    p2 = pd.read_csv(DATA / "phase2_unblinded.csv")[[NAME, TGT]].dropna(subset=[TGT])
-
-    def sc(pred, tag):
-        m = p2.merge(pd.DataFrame({NAME: tnames, "y": pred}), on=NAME)
-        s = score_all(m[TGT].to_numpy(float), m["y"].to_numpy(float))
-        print(f"    {tag:34s} RAE={s['rae']:.4f}  MAE={s['mae']:.4f}"); return s["rae"]
 
     strong = zoo > 4.5
     blend = a1.copy(); blend[strong] = 0.5 * a1[strong] + 0.5 * zoo[strong]

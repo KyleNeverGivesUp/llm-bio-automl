@@ -3,6 +3,21 @@
 LLM-driven AutoML for the **OpenADMET PXR Activity Prediction** challenge. This file is the
 handoff/state doc — read `RESULTS.md` for the full numeric log and `docs/` for design docs.
 
+## ⛔ WORKING RULE — no independent decisions (read first, every time)
+The user does the deciding; I execute exactly. **I must NOT make my own methodology/scope choices.**
+- **When reproducing a reference solution (e.g. `reproduce_1/` = the #1 PXR solution): implement ONLY
+  what the source report literally states, one-to-one.** Do NOT skip a technique, reduce its scope
+  (e.g. 3 models when the report says 5), substitute a model/data source, add a step the source does
+  not have (calibration, variance-matching, Set-1 weight tuning), or tune anything on the blind test
+  (Set-2). Match the source exactly.
+- **At EVERY point the source is silent or ambiguous — blend weights, which backbone, which
+  descriptors, hyperparameters, data substitutions — STOP and ASK before writing any code.** Do not
+  pick a default myself.
+- **Never propose "let me skip / just do a smaller version / I recommend dropping X" as a way to save
+  effort.** If I catch myself doing that, stop and ask instead. Do not conclude a method "doesn't work"
+  from an incomplete reproduction — finish it faithfully first.
+- The user has repeatedly (and angrily) corrected violations of this. Treat it as a hard gate.
+
 ## STATUS (2026-07-01): competition over → pivoting to AAAI publication
 - **The challenge closed July 1 23:59:59 UTC. We MISSED the final leaderboard submission** (timezone
   mix-up + a full day lost to GPU/OOM debugging). The research + results are intact and valid; only the
@@ -54,7 +69,9 @@ The original menu loop only combined **8 frozen featurizers × fixed sklearn mod
 - `src/cv_runner.py` (`run_plan_cv`), `src/aggregator.py` (ridge stack), `data/pxr_activity/folds_calibrated.json` (cluster folds calibrated to the judge).
 
 ## Environment / how to run
-- GPU: DSMLP A5000 pod (`launch.sh -g 1 -v a5000 -m 64`), **6h session limit**, ~11G home quota (TIGHT — auto-prune checkpoints/.sdf after extracting OOF/test). Models are small (~10M params); A5000 is plenty, no A100 needed.
+- GPU: DSMLP A5000 pod (`launch.sh -g 1 -v a5000 -m 64 -c 8`), **6h session limit**. **Always pass `-c 8`**
+  — without it the pod is CPU-throttled to ~1 core, which starves chemprop/TabICL dataloading and made
+  every run ~4× slower (a big time sink until 2026-07-20). With `-c 8` the pod gets the full node's cores., ~11G home quota (TIGHT — auto-prune checkpoints/.sdf after extracting OOF/test). Models are small (~10M params); A5000 is plenty, no A100 needed.
 - Weights auto-download on first run: CheMeleon (chemprop→Zenodo `~/.chemprop`), Uni-Mol (unimol_tools→Zenodo), ChemBERTa (transformers→HF). **Do not commit weights** — DSMLP fetches them.
 - Local dev: `uv run python ...`. Fine-tuning needs the pod GPU.
 
@@ -70,6 +87,6 @@ The original menu loop only combined **8 frozen featurizers × fixed sklearn mod
 `run_skill_manager.py` runs it end-to-end: setup → retrieve → run (finetune via template / frozen via featurizer) → stack (forward-selection + nnls). This is what produced the autonomous 0.5783. (`manager_agent.py` is the older menu-loop orchestrator.) Flags: `--fast` (smoke: 2 folds/tiny epochs), `--no-fallback` (strict: every LLM-decision re-raises instead of using a hardcoded default — proves LLM-driven), `--collect-only` (reuse predictions/, no GPU).
 
 ## Running on DSMLP
-- SSH: `~/.ssh/config` has `dsmlp` (ControlMaster → Duo once/8h). Pod: `launch.sh -g 1 -v a5000 -m 64`, 6h limit.
+- SSH: `~/.ssh/config` has `dsmlp` (ControlMaster → Duo once/8h). Pod: `launch.sh -g 1 -v a5000 -m 64 -c 8`, 6h limit.
 - env deps in `~/.local` (torch 2.4.1+cu121, chemprop, unimol_tools, lightgbm, xgboost, transformers; torchvision 0.19.1 matched). tensorboard `notf`/protobuf errors are HARMLESS (chemprop falls back to CSVLogger).
 - `python` (not `uv`) on the pod. Fine-tune writes to `/tmp/<plan>` (pod-local, off the 11G home quota); prune GPU zombies (`pkill -9 -f finetune`) if you hit CUDA OOM with a process holding ~23G.
