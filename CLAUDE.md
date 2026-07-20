@@ -13,6 +13,12 @@ The user does the deciding; I execute exactly. **I must NOT make my own methodol
 - **At EVERY point the source is silent or ambiguous — blend weights, which backbone, which
   descriptors, hyperparameters, data substitutions — STOP and ASK before writing any code.** Do not
   pick a default myself.
+- **MECHANICAL CHECK (the abstract rule above keeps failing because I mis-file methodology choices as
+  "mechanical coding"): if the source states a QUANTITY (a count like "~30 compounds", "5 models",
+  "4 concentrations"; a threshold like "4.5"), my code MUST reproduce that number — CHECK it after
+  coding. A mismatch = I diverged = STOP; do NOT rationalize it as "close enough / same order / more
+  principled". Any threshold/cutoff the source does not literally give = picking a number = a decision
+  = ASK first. (Cost the user ~1h: report said filter "~30", I removed 51.)**
 - **Never propose "let me skip / just do a smaller version / I recommend dropping X" as a way to save
   effort.** If I catch myself doing that, stop and ask instead. Do not conclude a method "doesn't work"
   from an incomplete reproduction — finish it faithfully first.
