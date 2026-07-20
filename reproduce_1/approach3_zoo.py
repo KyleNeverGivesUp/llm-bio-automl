@@ -123,7 +123,7 @@ def main():
     members["unimol"] = reuse("oof_unimol.csv", "test_unimol.csv")            # 3. Unimol2 (stand-in)
     members["svr"] = sklearn_oof(lambda: make_pipeline(StandardScaler(with_mean=False),
                                  SVR(kernel="rbf", C=10, gamma="scale")), Xm_tr, Xm_te, y, fold)  # 5. SVR
-    members["tabicl"] = sklearn_oof(lambda: TabICLRegressor(), Xd_tr, Xd_te, y, fold)              # 4. TabICL
+    members["tabicl"] = sklearn_oof(lambda: TabICLRegressor(device="cuda:0"), Xd_tr, Xd_te, y, fold)  # 4. TabICL
     members["chemprop"] = chemprop_plain(train, test, fold)                   # 1. Chemprop (GPU) — last (slow)
 
     for name, (o, _) in members.items():
